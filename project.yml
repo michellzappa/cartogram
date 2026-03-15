@@ -1,0 +1,56 @@
+name: Cartogram
+options:
+  bundleIdPrefix: com.cartogram
+  deploymentTarget:
+    macOS: "13.0"
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+
+packages:
+  MapCore:
+    path: .
+
+targets:
+  Cartogram:
+    type: application
+    platform: macOS
+    sources:
+      - macOS
+    dependencies:
+      - package: MapCore
+        product: MapCore
+    settings:
+      base:
+        INFOPLIST_FILE: macOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: macOS/Cartogram.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.centaur-labs.cartogram
+        PRODUCT_NAME: Cartogram
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: false
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  CartogramIOS:
+    type: application
+    platform: iOS
+    sources:
+      - iOS
+    dependencies:
+      - package: MapCore
+        product: MapCore
+    settings:
+      base:
+        INFOPLIST_FILE: iOS/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.centaur-labs.cartogram
+        PRODUCT_NAME: Cartogram
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: false
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 992N457T8D

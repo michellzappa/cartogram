@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.pbxuser
+*.perspectivev3
+*.moved-aside
+*.xcodeproj/
