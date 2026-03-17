@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "photo-atlas",
+    name: "cartogram",
     platforms: [.macOS(.v13), .iOS(.v16)],
     products: [
         .library(name: "MapCore", targets: ["MapCore"]),
-        .executable(name: "photo-atlas", targets: ["CLI"]),
+        .executable(name: "cartogram", targets: ["CLI"]),
     ],
     targets: [
         .target(name: "MapCore", path: "Sources/MapCore"),

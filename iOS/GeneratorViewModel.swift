@@ -38,6 +38,8 @@ class GeneratorViewModel: ObservableObject {
     @Published var rotation: Double = 0 // radians
     @Published var generationId: Int = 0 // incremented on each new render
     @Published var photoCount: Int = 0
+    @Published var locationDenied = false
+    @Published var photosDenied = false
 
     // Map center (set after first generate, updated by pan)
     private var centerLat: Double?
@@ -151,6 +153,17 @@ class GeneratorViewModel: ObservableObject {
         LocationService.shared.ensureAuthorized()
 
         DispatchQueue.global(qos: .userInitiated).async { [self] in
+            // Check permission states
+            let locStatus = CLLocationManager().authorizationStatus
+            DispatchQueue.main.async {
+                self.locationDenied = (locStatus == .denied || locStatus == .restricted)
+            }
+
+            let photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+            DispatchQueue.main.async {
+                self.photosDenied = (photoStatus == .denied || photoStatus == .restricted)
+            }
+
             // Load photos
             var heatmapPoints: [LocationPoint]?
             let points = fetchPhotoLocations()

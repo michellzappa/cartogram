@@ -16,6 +16,7 @@ targets:
     platform: macOS
     sources:
       - macOS
+      - AppIcon.icon
     dependencies:
       - package: MapCore
         product: MapCore
@@ -38,6 +39,7 @@ targets:
     platform: iOS
     sources:
       - iOS
+      - AppIcon.icon
     dependencies:
       - package: MapCore
         product: MapCore
@@ -54,3 +56,4 @@ targets:
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 992N457T8D
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

@@ -13,9 +13,9 @@
     <key>CFBundleDisplayName</key>
     <string>Cartogram</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.0.1</string>
     <key>LSUIElement</key>
     <true/>
     <key>LSApplicationCategoryType</key>

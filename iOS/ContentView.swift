@@ -62,7 +62,7 @@ struct ContentView: View {
                                 .background(Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
                         }
                         .padding(.leading, 16)
-                        .padding(.top, 56)
+                        .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 56)
                         Spacer()
                     }
                     Spacer()
@@ -70,12 +70,19 @@ struct ContentView: View {
                 .transition(.opacity)
             }
 
-            if let error = viewModel.lastError {
+            if viewModel.locationDenied && viewModel.generatedImage == nil {
+                permissionBanner(
+                    icon: "location.slash.fill",
+                    title: "Location Access Needed",
+                    message: "Cartogram needs your location to center the map. You can also set a manual address in Settings.",
+                    showSettings: true
+                )
+            } else if let error = viewModel.lastError {
                 VStack {
                     errorBanner(error)
                     Spacer()
                 }
-                .padding(.top, 60)
+                .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 60)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -223,6 +230,7 @@ struct ContentView: View {
                 .environment(\.colorScheme, .dark)
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .frame(maxWidth: 500)
         .padding(.horizontal, 12)
     }
 
@@ -308,6 +316,49 @@ struct ContentView: View {
     }
 
     // MARK: - Error Banner
+
+    private func permissionBanner(icon: String, title: String, message: String, showSettings: Bool) -> some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            VStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 36))
+                    .foregroundStyle(.white.opacity(0.6))
+
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            }
+
+            if showSettings {
+                HStack(spacing: 12) {
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Use Address Instead") {
+                        viewModel.locationMode = .address
+                        self.showSettings = true
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.white)
+                }
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: 500)
+    }
 
     private func errorBanner(_ message: String) -> some View {
         Text(message)

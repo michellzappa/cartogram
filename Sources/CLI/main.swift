@@ -73,7 +73,7 @@ if config.help {
     print("""
     Cartogram - map wallpaper from your photo locations
 
-    Usage: photo-atlas [options]
+    Usage: cartogram [options]
 
       --address, -a     Street address to geocode
       --lat <degrees>   Latitude (auto-detected if omitted)
