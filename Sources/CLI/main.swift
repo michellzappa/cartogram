@@ -2,6 +2,7 @@ import MapCore
 #if canImport(AppKit)
 import AppKit
 #endif
+import CoreImage
 import Foundation
 
 // MARK: - CLI Argument Parsing
@@ -37,7 +38,7 @@ func parseArgs() -> Config {
 // MARK: - macOS Wallpaper
 
 #if canImport(AppKit)
-func setWallpaper(from imageData: Data) throws {
+func setWallpaper(ciImage: CIImage) throws {
     let fm = FileManager.default
     let dir = fm.homeDirectoryForCurrentUser.appendingPathComponent(".cartogram")
     try fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -47,8 +48,17 @@ func setWallpaper(from imageData: Data) throws {
         for f in oldFiles { try? fm.removeItem(at: f) }
     }
 
-    let file = dir.appendingPathComponent("wallpaper-\(Int(Date().timeIntervalSince1970)).png")
-    try imageData.write(to: file)
+    let file = dir.appendingPathComponent("wallpaper-\(Int(Date().timeIntervalSince1970)).heic")
+
+    // Write HDR HEIF (10-bit PQ)
+    guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else {
+        print("Error: Could not create HDR color space")
+        exit(1)
+    }
+    let ctx = CIContext(options: [
+        .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+    ])
+    try ctx.writeHEIF10Representation(of: ciImage, to: file, colorSpace: colorSpace)
     print("Saved: \(file.path)")
 
     let workspace = NSWorkspace.shared
@@ -143,9 +153,9 @@ let size = (width: 2560, height: 1440) // sensible default for headless
 #endif
 
 print("  Screen: \(size.width)x\(size.height) px")
-print("Generating wallpaper (zoom \(config.zoom))...")
+print("Generating HDR wallpaper (zoom \(config.zoom))...")
 
-guard let cgImage = generateMapImage(
+guard let ciImage = generateMapImageHDR(
     lat: lat, lon: lon, zoom: config.zoom,
     width: size.width, height: size.height,
     heatmapPoints: heatmapPoints
@@ -155,14 +165,8 @@ guard let cgImage = generateMapImage(
 }
 
 #if canImport(AppKit)
-let rep = NSBitmapImageRep(cgImage: cgImage)
-guard let pngData = rep.representation(using: .png, properties: [:]) else {
-    print("Error: Failed to encode PNG")
-    exit(1)
-}
-
 do {
-    try setWallpaper(from: pngData)
+    try setWallpaper(ciImage: ciImage)
 } catch {
     print("Error: \(error.localizedDescription)")
     exit(1)

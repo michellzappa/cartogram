@@ -43,7 +43,7 @@ struct MenuBarMenu: View {
             viewModel.saveImage()
         }
         .keyboardShortcut("s")
-        .disabled(viewModel.lastCGImage == nil)
+        .disabled(viewModel.lastCIImage == nil)
 
         Divider()
 

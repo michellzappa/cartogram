@@ -134,8 +134,8 @@ public enum Themes {
         bgColor: (0.06, 0.06, 0.10),
         heatmap: HeatmapPalette(
             dim:    (r: 0.45, g: 0.05, b: 0.40, a: 0.40),
-            mid:    (r: 0.75, g: 0.15, b: 0.45, a: 0.65),
-            bright: (r: 1.00, g: 0.75, b: 0.80, a: 0.90)
+            mid:    (r: 0.90, g: 0.18, b: 0.54, a: 0.65),
+            bright: (r: 2.50, g: 1.80, b: 2.00, a: 0.90)
         )
     )
 
@@ -147,8 +147,8 @@ public enum Themes {
         bgColor: (0.05, 0.05, 0.07),
         heatmap: HeatmapPalette(
             dim:    (r: 0.05, g: 0.30, b: 0.45, a: 0.40),
-            mid:    (r: 0.10, g: 0.55, b: 0.75, a: 0.65),
-            bright: (r: 0.55, g: 0.95, b: 1.00, a: 0.90)
+            mid:    (r: 0.12, g: 0.66, b: 0.90, a: 0.65),
+            bright: (r: 1.40, g: 2.40, b: 2.50, a: 0.90)
         )
     )
 
@@ -160,13 +160,13 @@ public enum Themes {
         bgColor: (0.10, 0.08, 0.06),
         heatmap: HeatmapPalette(
             dim:    (r: 0.50, g: 0.15, b: 0.05, a: 0.45),
-            mid:    (r: 0.85, g: 0.35, b: 0.05, a: 0.70),
-            bright: (r: 1.00, g: 0.85, b: 0.30, a: 0.90)
+            mid:    (r: 1.00, g: 0.42, b: 0.06, a: 0.70),
+            bright: (r: 2.50, g: 2.00, b: 0.80, a: 0.90)
         ),
         blend: .normal
     )
 
-    // Cool light grey map + deep indigo heatmap
+    // Cool light grey map + deep indigo heatmap (no EDR — multiply on light bg)
     public static let ghost = MapTheme(
         id: "ghost",
         name: "Ghost",
@@ -188,8 +188,8 @@ public enum Themes {
         bgColor: (0.07, 0.09, 0.06),
         heatmap: HeatmapPalette(
             dim:    (r: 0.10, g: 0.40, b: 0.15, a: 0.40),
-            mid:    (r: 0.20, g: 0.70, b: 0.30, a: 0.65),
-            bright: (r: 0.55, g: 1.00, b: 0.60, a: 0.90)
+            mid:    (r: 0.24, g: 0.84, b: 0.36, a: 0.65),
+            bright: (r: 1.40, g: 2.50, b: 1.50, a: 0.90)
         ),
         blend: .normal
     )

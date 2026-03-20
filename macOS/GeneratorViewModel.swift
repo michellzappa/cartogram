@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CoreImage
 import CoreLocation
 import MapCore
 
@@ -153,7 +154,9 @@ class GeneratorViewModel: ObservableObject {
             DispatchQueue.main.async { self.progress = "Rendering wallpaper..." }
 
             let theme = selectedTheme
-            guard let cgImage = generateMapImage(
+
+            // Always generate HDR — encoded as 10-bit PQ HEIF
+            guard let ciImage = generateMapImageHDR(
                 lat: lat, lon: lon, zoom: zoom,
                 width: screenW, height: screenH,
                 heatmapPoints: heatmapPoints,
@@ -166,15 +169,23 @@ class GeneratorViewModel: ObservableObject {
                 return
             }
 
+            let ciCtx = CIContext()
+            guard let cgImage = ciCtx.createCGImage(ciImage, from: ciImage.extent) else {
+                DispatchQueue.main.async {
+                    self.lastError = "Failed to create preview image"
+                    self.isGenerating = false
+                }
+                return
+            }
             let previewImg = NSImage(cgImage: cgImage, size: NSSize(width: screenW, height: screenH))
 
             DispatchQueue.main.async { self.progress = "Setting wallpaper..." }
 
             do {
-                try WallpaperService.setWallpaper(cgImage: cgImage)
+                try WallpaperService.setWallpaperHDR(ciImage: ciImage)
                 DispatchQueue.main.async {
                     self.previewImage = previewImg
-                    self.lastCGImage = cgImage
+                    self.lastCIImage = ciImage
                     self.progress = "Done!"
                     self.isGenerating = false
                 }
@@ -187,23 +198,25 @@ class GeneratorViewModel: ObservableObject {
         }
     }
 
-    private(set) var lastCGImage: CGImage?
+    private(set) var lastCIImage: CIImage?
 
     func saveImage() {
-        guard let cgImage = lastCGImage else { return }
+        guard let ciImage = lastCIImage else { return }
 
         NSApp.activate(ignoringOtherApps: true)
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "Cartogram Wallpaper.png"
+        panel.allowedContentTypes = [.heic]
+        panel.nameFieldStringValue = "Cartogram Wallpaper.heic"
         panel.canCreateDirectories = true
         panel.level = .floating
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { return }
-        CGImageDestinationAddImage(dest, cgImage, nil)
-        CGImageDestinationFinalize(dest)
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else { return }
+        let ctx = CIContext(options: [
+            .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+        ])
+        try? ctx.writeHEIF10Representation(of: ciImage, to: url, colorSpace: colorSpace)
     }
 }

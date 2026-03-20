@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import CoreImage
 import CoreLocation
 import Photos
 import MapCore
@@ -49,6 +50,8 @@ class GeneratorViewModel: ObservableObject {
     private var originalLon: Double?
     // Queued regeneration (if generate() called while already generating)
     private var pendingGenerate = false
+    // Last HDR CIImage for saving
+    private var lastCIImage: CIImage?
 
     var selectedTheme: MapTheme { Themes.byId(selectedThemeId) }
 
@@ -233,7 +236,9 @@ class GeneratorViewModel: ObservableObject {
 
             let theme = selectedTheme
             let rot = self.rotation
-            guard let cgImage = generateMapImage(
+
+            // Always generate HDR — encoded as 10-bit PQ HEIF on save
+            guard let ciImage = generateMapImageHDR(
                 lat: lat, lon: lon, zoom: zoom,
                 width: screenW, height: screenH,
                 heatmapPoints: heatmapPoints,
@@ -248,10 +253,19 @@ class GeneratorViewModel: ObservableObject {
                 return
             }
 
+            let ciCtx = CIContext()
+            guard let cgImage = ciCtx.createCGImage(ciImage, from: ciImage.extent) else {
+                DispatchQueue.main.async {
+                    self.lastError = "Failed to create preview image"
+                    self.isGenerating = false
+                }
+                return
+            }
             let uiImage = UIImage(cgImage: cgImage)
 
             DispatchQueue.main.async {
                 self.generatedImage = uiImage
+                self.lastCIImage = ciImage
                 self.generationId += 1
                 self.progress = "Done!"
                 self.isGenerating = false
@@ -264,10 +278,26 @@ class GeneratorViewModel: ObservableObject {
     }
 
     func saveToPhotos() {
-        guard let image = generatedImage else { return }
+        guard let ciImage = lastCIImage else { return }
+
+        // Write HDR HEIF (10-bit PQ) to temp file, then add to photo library
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cartogram_hdr_\(Int(Date().timeIntervalSince1970)).heic")
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else { return }
+        let ctx = CIContext(options: [
+            .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+        ])
+        do {
+            try ctx.writeHEIF10Representation(of: ciImage, to: tempURL, colorSpace: colorSpace)
+        } catch {
+            DispatchQueue.main.async { self.lastError = "Failed to encode HDR image" }
+            return
+        }
+
         PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAsset(from: image)
+            PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: tempURL)
         } completionHandler: { success, error in
+            try? FileManager.default.removeItem(at: tempURL)
             DispatchQueue.main.async {
                 if success {
                     self.progress = "Saved to Photos!"

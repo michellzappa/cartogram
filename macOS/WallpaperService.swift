@@ -1,5 +1,5 @@
 import AppKit
-import ImageIO
+import CoreImage
 
 enum WallpaperService {
     static func wallpaperDirectory() -> URL {
@@ -9,28 +9,28 @@ enum WallpaperService {
         return appSupport
     }
 
-    static func setWallpaper(cgImage: CGImage) throws {
-        let fm = FileManager.default
-        let dir = wallpaperDirectory()
-
-        // Clean up old wallpapers
-        if let oldFiles = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-            for f in oldFiles where f.pathExtension == "png" {
-                try? fm.removeItem(at: f)
+    private static func cleanOldWallpapers(in dir: URL) {
+        if let oldFiles = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+            for f in oldFiles where f.pathExtension == "png" || f.pathExtension == "heic" {
+                try? FileManager.default.removeItem(at: f)
             }
         }
+    }
 
-        // Write PNG
-        let file = dir.appendingPathComponent("wallpaper-\(Int(Date().timeIntervalSince1970)).png")
-        guard let dest = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil) else {
+    /// Write HDR HEIF (10-bit PQ) and set as wallpaper.
+    static func setWallpaperHDR(ciImage: CIImage) throws {
+        let dir = wallpaperDirectory()
+        cleanOldWallpapers(in: dir)
+
+        let file = dir.appendingPathComponent("wallpaper-\(Int(Date().timeIntervalSince1970)).heic")
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else {
             throw WallpaperError.encodingFailed
         }
-        CGImageDestinationAddImage(dest, cgImage, nil)
-        guard CGImageDestinationFinalize(dest) else {
-            throw WallpaperError.encodingFailed
-        }
+        let ctx = CIContext(options: [
+            .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+        ])
+        try ctx.writeHEIF10Representation(of: ciImage, to: file, colorSpace: colorSpace)
 
-        // Set for all screens
         let workspace = NSWorkspace.shared
         for screen in NSScreen.screens {
             try workspace.setDesktopImageURL(file, for: screen, options: [:])
