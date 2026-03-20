@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import CoreImage
 import CoreLocation
+import ImageIO
 import MapCore
 
 enum LocationMode: String, CaseIterable {
@@ -24,6 +25,7 @@ class GeneratorViewModel: ObservableObject {
     @AppStorage("defaultZoom") var zoom: Int = 14 { didSet { regenerateIfNeeded() } }
     @AppStorage("heatmapEnabled") var heatmapEnabled: Bool = true { didSet { regenerateIfNeeded() } }
     @AppStorage("selectedTheme") var selectedThemeId: String = "cyberpunk" { didSet { regenerateIfNeeded() } }
+    @AppStorage("hdrEnabled") var hdrEnabled: Bool = true { didSet { regenerateIfNeeded() } }
     var locationMode: LocationMode {
         get { LocationMode(rawValue: locationModeRaw) ?? .auto }
         set { locationModeRaw = newValue.rawValue }
@@ -154,69 +156,114 @@ class GeneratorViewModel: ObservableObject {
             DispatchQueue.main.async { self.progress = "Rendering wallpaper..." }
 
             let theme = selectedTheme
+            let useHDR = self.hdrEnabled
 
-            // Always generate HDR — encoded as 10-bit PQ HEIF
-            guard let ciImage = generateMapImageHDR(
-                lat: lat, lon: lon, zoom: zoom,
-                width: screenW, height: screenH,
-                heatmapPoints: heatmapPoints,
-                theme: theme
-            ) else {
-                DispatchQueue.main.async {
-                    self.lastError = "Failed to generate wallpaper"
-                    self.isGenerating = false
+            if useHDR {
+                guard let ciImage = generateMapImageHDR(
+                    lat: lat, lon: lon, zoom: zoom,
+                    width: screenW, height: screenH,
+                    heatmapPoints: heatmapPoints,
+                    theme: theme
+                ) else {
+                    DispatchQueue.main.async {
+                        self.lastError = "Failed to generate wallpaper"
+                        self.isGenerating = false
+                    }
+                    return
                 }
-                return
-            }
 
-            let ciCtx = CIContext()
-            guard let cgImage = ciCtx.createCGImage(ciImage, from: ciImage.extent) else {
-                DispatchQueue.main.async {
-                    self.lastError = "Failed to create preview image"
-                    self.isGenerating = false
+                let ciCtx = CIContext()
+                guard let cgImage = ciCtx.createCGImage(ciImage, from: ciImage.extent) else {
+                    DispatchQueue.main.async {
+                        self.lastError = "Failed to create preview image"
+                        self.isGenerating = false
+                    }
+                    return
                 }
-                return
-            }
-            let previewImg = NSImage(cgImage: cgImage, size: NSSize(width: screenW, height: screenH))
+                let previewImg = NSImage(cgImage: cgImage, size: NSSize(width: screenW, height: screenH))
 
-            DispatchQueue.main.async { self.progress = "Setting wallpaper..." }
+                DispatchQueue.main.async { self.progress = "Setting wallpaper..." }
 
-            do {
-                try WallpaperService.setWallpaperHDR(ciImage: ciImage)
-                DispatchQueue.main.async {
-                    self.previewImage = previewImg
-                    self.lastCIImage = ciImage
-                    self.progress = "Done!"
-                    self.isGenerating = false
+                do {
+                    try WallpaperService.setWallpaperHDR(ciImage: ciImage)
+                    DispatchQueue.main.async {
+                        self.previewImage = previewImg
+                        self.lastCIImage = ciImage
+                        self.lastCGImage = nil
+                        self.progress = "Done!"
+                        self.isGenerating = false
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self.lastError = error.localizedDescription
+                        self.isGenerating = false
+                    }
                 }
-            } catch {
-                DispatchQueue.main.async {
-                    self.lastError = error.localizedDescription
-                    self.isGenerating = false
+            } else {
+                guard let cgImage = generateMapImage(
+                    lat: lat, lon: lon, zoom: zoom,
+                    width: screenW, height: screenH,
+                    heatmapPoints: heatmapPoints,
+                    theme: theme
+                ) else {
+                    DispatchQueue.main.async {
+                        self.lastError = "Failed to generate wallpaper"
+                        self.isGenerating = false
+                    }
+                    return
+                }
+
+                let previewImg = NSImage(cgImage: cgImage, size: NSSize(width: screenW, height: screenH))
+
+                DispatchQueue.main.async { self.progress = "Setting wallpaper..." }
+
+                do {
+                    try WallpaperService.setWallpaperSDR(cgImage: cgImage)
+                    DispatchQueue.main.async {
+                        self.previewImage = previewImg
+                        self.lastCIImage = nil
+                        self.lastCGImage = cgImage
+                        self.progress = "Done!"
+                        self.isGenerating = false
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self.lastError = error.localizedDescription
+                        self.isGenerating = false
+                    }
                 }
             }
         }
     }
 
     private(set) var lastCIImage: CIImage?
+    private(set) var lastCGImage: CGImage?
+
+    var canSave: Bool { lastCIImage != nil || lastCGImage != nil }
 
     func saveImage() {
-        guard let ciImage = lastCIImage else { return }
-
         NSApp.activate(ignoringOtherApps: true)
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.heic]
-        panel.nameFieldStringValue = "Cartogram Wallpaper.heic"
         panel.canCreateDirectories = true
         panel.level = .floating
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else { return }
-        let ctx = CIContext(options: [
-            .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
-        ])
-        try? ctx.writeHEIF10Representation(of: ciImage, to: url, colorSpace: colorSpace)
+        if let ciImage = lastCIImage {
+            panel.allowedContentTypes = [.heic]
+            panel.nameFieldStringValue = "Cartogram Wallpaper.heic"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else { return }
+            let ctx = CIContext(options: [
+                .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+            ])
+            try? ctx.writeHEIF10Representation(of: ciImage, to: url, colorSpace: colorSpace)
+        } else if let cgImage = lastCGImage {
+            panel.allowedContentTypes = [.png]
+            panel.nameFieldStringValue = "Cartogram Wallpaper.png"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(dest, cgImage, nil)
+            CGImageDestinationFinalize(dest)
+        }
     }
 }

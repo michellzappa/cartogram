@@ -270,6 +270,7 @@ struct ContentView: View {
 
                 Section("Map") {
                     Toggle("Heatmap", isOn: $viewModel.heatmapEnabled)
+                    Toggle("HDR", isOn: $viewModel.hdrEnabled)
                 }
 
                 Section("Location") {

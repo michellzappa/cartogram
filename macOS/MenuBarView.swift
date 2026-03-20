@@ -36,6 +36,7 @@ struct MenuBarMenu: View {
         }
 
         Toggle("Photo Heatmap", isOn: $viewModel.heatmapEnabled)
+        Toggle("HDR", isOn: $viewModel.hdrEnabled)
 
         Divider()
 
@@ -43,7 +44,7 @@ struct MenuBarMenu: View {
             viewModel.saveImage()
         }
         .keyboardShortcut("s")
-        .disabled(viewModel.lastCIImage == nil)
+        .disabled(!viewModel.canSave)
 
         Divider()
 

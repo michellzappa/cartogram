@@ -25,6 +25,7 @@ class GeneratorViewModel: ObservableObject {
     @AppStorage("defaultZoom") var zoom: Int = 14 { didSet { regenerateIfNeeded() } }
     @AppStorage("heatmapEnabled") var heatmapEnabled: Bool = true { didSet { regenerateIfNeeded() } }
     @AppStorage("selectedTheme") var selectedThemeId: String = "cyberpunk" { didSet { regenerateIfNeeded() } }
+    @AppStorage("hdrEnabled") var hdrEnabled: Bool = true { didSet { regenerateIfNeeded() } }
     var locationMode: LocationMode {
         get { LocationMode(rawValue: locationModeRaw) ?? .auto }
         set { locationModeRaw = newValue.rawValue }
@@ -236,73 +237,116 @@ class GeneratorViewModel: ObservableObject {
 
             let theme = selectedTheme
             let rot = self.rotation
+            let useHDR = self.hdrEnabled
 
-            // Always generate HDR — encoded as 10-bit PQ HEIF on save
-            guard let ciImage = generateMapImageHDR(
-                lat: lat, lon: lon, zoom: zoom,
-                width: screenW, height: screenH,
-                heatmapPoints: heatmapPoints,
-                theme: theme,
-                intensity: 1.5,
-                rotation: rot
-            ) else {
-                DispatchQueue.main.async {
-                    self.lastError = "Failed to generate wallpaper"
-                    self.isGenerating = false
+            if useHDR {
+                guard let ciImage = generateMapImageHDR(
+                    lat: lat, lon: lon, zoom: zoom,
+                    width: screenW, height: screenH,
+                    heatmapPoints: heatmapPoints,
+                    theme: theme,
+                    intensity: 1.5,
+                    rotation: rot
+                ) else {
+                    DispatchQueue.main.async {
+                        self.lastError = "Failed to generate wallpaper"
+                        self.isGenerating = false
+                    }
+                    return
                 }
-                return
-            }
 
-            let ciCtx = CIContext()
-            guard let cgImage = ciCtx.createCGImage(ciImage, from: ciImage.extent) else {
-                DispatchQueue.main.async {
-                    self.lastError = "Failed to create preview image"
-                    self.isGenerating = false
+                let ciCtx = CIContext()
+                guard let cgImage = ciCtx.createCGImage(ciImage, from: ciImage.extent) else {
+                    DispatchQueue.main.async {
+                        self.lastError = "Failed to create preview image"
+                        self.isGenerating = false
+                    }
+                    return
                 }
-                return
-            }
-            let uiImage = UIImage(cgImage: cgImage)
+                let uiImage = UIImage(cgImage: cgImage)
 
-            DispatchQueue.main.async {
-                self.generatedImage = uiImage
-                self.lastCIImage = ciImage
-                self.generationId += 1
-                self.progress = "Done!"
-                self.isGenerating = false
-                if self.pendingGenerate {
-                    self.pendingGenerate = false
-                    self.generate()
+                DispatchQueue.main.async {
+                    self.generatedImage = uiImage
+                    self.lastCIImage = ciImage
+                    self.generationId += 1
+                    self.progress = "Done!"
+                    self.isGenerating = false
+                    if self.pendingGenerate {
+                        self.pendingGenerate = false
+                        self.generate()
+                    }
+                }
+            } else {
+                guard let cgImage = generateMapImage(
+                    lat: lat, lon: lon, zoom: zoom,
+                    width: screenW, height: screenH,
+                    heatmapPoints: heatmapPoints,
+                    theme: theme,
+                    intensity: 1.5,
+                    rotation: rot
+                ) else {
+                    DispatchQueue.main.async {
+                        self.lastError = "Failed to generate wallpaper"
+                        self.isGenerating = false
+                    }
+                    return
+                }
+                let uiImage = UIImage(cgImage: cgImage)
+
+                DispatchQueue.main.async {
+                    self.generatedImage = uiImage
+                    self.lastCIImage = nil
+                    self.generationId += 1
+                    self.progress = "Done!"
+                    self.isGenerating = false
+                    if self.pendingGenerate {
+                        self.pendingGenerate = false
+                        self.generate()
+                    }
                 }
             }
         }
     }
 
     func saveToPhotos() {
-        guard let ciImage = lastCIImage else { return }
+        if let ciImage = lastCIImage {
+            // HDR: write HEIF 10-bit PQ to temp file
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cartogram_hdr_\(Int(Date().timeIntervalSince1970)).heic")
+            guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else { return }
+            let ctx = CIContext(options: [
+                .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+            ])
+            do {
+                try ctx.writeHEIF10Representation(of: ciImage, to: tempURL, colorSpace: colorSpace)
+            } catch {
+                DispatchQueue.main.async { self.lastError = "Failed to encode HDR image" }
+                return
+            }
 
-        // Write HDR HEIF (10-bit PQ) to temp file, then add to photo library
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cartogram_hdr_\(Int(Date().timeIntervalSince1970)).heic")
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else { return }
-        let ctx = CIContext(options: [
-            .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
-        ])
-        do {
-            try ctx.writeHEIF10Representation(of: ciImage, to: tempURL, colorSpace: colorSpace)
-        } catch {
-            DispatchQueue.main.async { self.lastError = "Failed to encode HDR image" }
-            return
-        }
-
-        PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: tempURL)
-        } completionHandler: { success, error in
-            try? FileManager.default.removeItem(at: tempURL)
-            DispatchQueue.main.async {
-                if success {
-                    self.progress = "Saved to Photos!"
-                } else {
-                    self.lastError = error?.localizedDescription ?? "Failed to save"
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: tempURL)
+            } completionHandler: { success, error in
+                try? FileManager.default.removeItem(at: tempURL)
+                DispatchQueue.main.async {
+                    if success {
+                        self.progress = "Saved to Photos!"
+                    } else {
+                        self.lastError = error?.localizedDescription ?? "Failed to save"
+                    }
+                }
+            }
+        } else if let image = generatedImage {
+            // SDR fallback
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            } completionHandler: { success, error in
+                DispatchQueue.main.async {
+                    if success {
+                        self.progress = "Saved to Photos!"
+                    } else {
+                        self.lastError = error?.localizedDescription ?? "Failed to save"
+                    }
                 }
             }
         }

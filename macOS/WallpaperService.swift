@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage
+import ImageIO
 
 enum WallpaperService {
     static func wallpaperDirectory() -> URL {
@@ -30,6 +31,26 @@ enum WallpaperService {
             .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
         ])
         try ctx.writeHEIF10Representation(of: ciImage, to: file, colorSpace: colorSpace)
+
+        let workspace = NSWorkspace.shared
+        for screen in NSScreen.screens {
+            try workspace.setDesktopImageURL(file, for: screen, options: [:])
+        }
+    }
+
+    /// Write standard PNG and set as wallpaper.
+    static func setWallpaperSDR(cgImage: CGImage) throws {
+        let dir = wallpaperDirectory()
+        cleanOldWallpapers(in: dir)
+
+        let file = dir.appendingPathComponent("wallpaper-\(Int(Date().timeIntervalSince1970)).png")
+        guard let dest = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil) else {
+            throw WallpaperError.encodingFailed
+        }
+        CGImageDestinationAddImage(dest, cgImage, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            throw WallpaperError.encodingFailed
+        }
 
         let workspace = NSWorkspace.shared
         for screen in NSScreen.screens {
