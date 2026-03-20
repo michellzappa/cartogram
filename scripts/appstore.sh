@@ -81,7 +81,7 @@ TEAM_ID="992N457T8D"
 rm -rf "$ARCHIVE_DIR" "$EXPORT_DIR"
 mkdir -p "$ARCHIVE_DIR" "$EXPORT_DIR"
 
-# ── Version bump ─────────────────────────────────────────────────────────────
+# ── Version bump (skip on dry run — use current values) ──────────────────────
 
 echo "==> Bumping version to $MARKETING_VERSION..."
 
@@ -90,17 +90,21 @@ CURRENT_BUILD=$(grep -m1 'CURRENT_PROJECT_VERSION' "$PROJECT/project.pbxproj" | 
 NEW_BUILD=$((CURRENT_BUILD + 1))
 echo "    Build number: $CURRENT_BUILD → $NEW_BUILD"
 
-# Update project.pbxproj
-sed -i '' "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $MARKETING_VERSION/g" "$PROJECT/project.pbxproj"
-sed -i '' "s/CURRENT_PROJECT_VERSION = [^;]*/CURRENT_PROJECT_VERSION = $NEW_BUILD/g" "$PROJECT/project.pbxproj"
+if ! $DRY_RUN; then
+    # Update project.pbxproj
+    sed -i '' "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $MARKETING_VERSION/g" "$PROJECT/project.pbxproj"
+    sed -i '' "s/CURRENT_PROJECT_VERSION = [^;]*/CURRENT_PROJECT_VERSION = $NEW_BUILD/g" "$PROJECT/project.pbxproj"
 
-# Update Info.plists
-for plist in "$PROJECT_DIR/macOS/Info.plist" "$PROJECT_DIR/iOS/Info.plist"; do
-    if [[ -f "$plist" ]]; then
-        /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$plist"
-        /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD" "$plist"
-    fi
-done
+    # Update Info.plists
+    for plist in "$PROJECT_DIR/macOS/Info.plist" "$PROJECT_DIR/iOS/Info.plist"; do
+        if [[ -f "$plist" ]]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD" "$plist"
+        fi
+    done
+else
+    echo "    (dry run — version files not modified)"
+fi
 
 echo "    Version: $MARKETING_VERSION ($NEW_BUILD)"
 
