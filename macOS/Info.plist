@@ -2,29 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.centaur-labs.cartogram</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleName</key>
-    <string>Cartogram</string>
-    <key>CFBundleDisplayName</key>
-    <string>Cartogram</string>
-    <key>CFBundleVersion</key>
-    <string>2</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.1</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.utilities</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>Cartogram uses your photo locations to generate a heatmap overlay on your wallpaper.</string>
-    <key>NSLocationUsageDescription</key>
-    <string>Cartogram uses your location to center the map on your current position.</string>
-    <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Cartogram uses your location to center the map on your current position.</string>
+	<key>CFBundleDisplayName</key>
+	<string>Cartogram</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.centaur-labs.cartogram</string>
+	<key>CFBundleName</key>
+	<string>Cartogram</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.2</string>
+	<key>CFBundleVersion</key>
+	<string>4</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSLocationUsageDescription</key>
+	<string>Cartogram uses your location to center the map on your current position.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Cartogram uses your location to center the map on your current position.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Cartogram uses your photo locations to generate a heatmap overlay on your wallpaper.</string>
 </dict>
 </plist>
