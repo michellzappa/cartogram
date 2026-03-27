@@ -15,6 +15,10 @@ public struct Config {
     public var zoom: Int = 14
     public var heatmap: Bool = true
     public var help: Bool = false
+    public var theme: String?
+    public var output: String?
+    public var width: Int?
+    public var height: Int?
 
     public static let tileSize = 512 // rendered tile size
     public static let maxTileZoom = 14 // OpenFreeMap max zoom

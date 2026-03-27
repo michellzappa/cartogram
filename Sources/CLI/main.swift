@@ -25,6 +25,10 @@ func parseArgs() -> Config {
                 c.address = parts.joined(separator: " ")
             }
         case "--zoom", "-z": i += 1; if i < args.count { c.zoom = Int(args[i]) ?? 14 }
+        case "--theme", "-t": i += 1; if i < args.count { c.theme = args[i] }
+        case "--output", "-o": i += 1; if i < args.count { c.output = args[i] }
+        case "--width": i += 1; if i < args.count { c.width = Int(args[i]) }
+        case "--height": i += 1; if i < args.count { c.height = Int(args[i]) }
         case "--no-heatmap": c.heatmap = false
         case "--help", "-h": c.help = true
         default: break
@@ -89,6 +93,10 @@ if config.help {
       --lat <degrees>   Latitude (auto-detected if omitted)
       --lon <degrees>   Longitude (auto-detected if omitted)
       --zoom, -z <n>    Zoom level 1-18 (default: 14)
+      --theme, -t <id>  Theme: cyberpunk, midnight, ember, ghost, moss
+      --output, -o <p>  Output file path (PNG or HEIC)
+      --width <px>      Output width (default: screen width)
+      --height <px>     Output height (default: screen height)
       --no-heatmap      Skip photo heatmap overlay
       -h, --help        Show this help
 
@@ -143,32 +151,76 @@ if let points = heatmapPoints, config.lat == nil && config.lon == nil && config.
 }
 
 // Determine output size
-#if canImport(AppKit)
-guard let size = screenPixelSize() else {
-    print("Error: No screen found")
-    exit(1)
-}
-#else
-let size = (width: 2560, height: 1440) // sensible default for headless
-#endif
+let outputW: Int
+let outputH: Int
 
-print("  Screen: \(size.width)x\(size.height) px")
+if let w = config.width, let h = config.height {
+    outputW = w; outputH = h
+} else {
+    #if canImport(AppKit)
+    guard let screenSize = screenPixelSize() else {
+        print("Error: No screen found")
+        exit(1)
+    }
+    outputW = screenSize.width; outputH = screenSize.height
+    #else
+    outputW = 2560; outputH = 1440
+    #endif
+}
+
+let theme = Themes.byId(config.theme ?? "cyberpunk")
+print("  Size: \(outputW)x\(outputH) px")
+print("  Theme: \(theme.id)")
 print("Generating HDR wallpaper (zoom \(config.zoom))...")
 
 guard let ciImage = generateMapImageHDR(
     lat: lat, lon: lon, zoom: config.zoom,
-    width: size.width, height: size.height,
-    heatmapPoints: heatmapPoints
+    width: outputW, height: outputH,
+    heatmapPoints: heatmapPoints,
+    theme: theme
 ) else {
     print("Error: Failed to generate wallpaper")
     exit(1)
 }
 
-#if canImport(AppKit)
-do {
-    try setWallpaper(ciImage: ciImage)
-} catch {
-    print("Error: \(error.localizedDescription)")
+// Output: file or wallpaper
+if let outputPath = config.output {
+    let url = URL(fileURLWithPath: outputPath)
+    let ctx = CIContext(options: [
+        .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+    ])
+
+    if url.pathExtension.lowercased() == "png" {
+        // SDR PNG export
+        guard let cgImage = ctx.createCGImage(ciImage, from: ciImage.extent),
+              let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+            print("Error: Failed to create PNG")
+            exit(1)
+        }
+        CGImageDestinationAddImage(dest, cgImage, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            print("Error: Failed to write PNG")
+            exit(1)
+        }
+    } else {
+        // HDR HEIC export
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else {
+            print("Error: Could not create HDR color space")
+            exit(1)
+        }
+        try ctx.writeHEIF10Representation(of: ciImage, to: url, colorSpace: colorSpace)
+    }
+    print("Saved: \(outputPath)")
+} else {
+    #if canImport(AppKit)
+    do {
+        try setWallpaper(ciImage: ciImage)
+    } catch {
+        print("Error: \(error.localizedDescription)")
+        exit(1)
+    }
+    #else
+    print("Error: No --output specified and no display available")
     exit(1)
+    #endif
 }
-#endif
