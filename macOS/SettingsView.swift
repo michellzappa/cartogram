@@ -21,27 +21,30 @@ struct SettingsView: View {
 
             Section("Theme") {
                 ForEach(Themes.all, id: \.id) { theme in
-                    HStack {
-                        // Color swatch
-                        HStack(spacing: 2) {
-                            ThemeSwatchColor(r: theme.heatmap.dim.r, g: theme.heatmap.dim.g, b: theme.heatmap.dim.b)
-                            ThemeSwatchColor(r: theme.heatmap.mid.r, g: theme.heatmap.mid.g, b: theme.heatmap.mid.b)
-                            ThemeSwatchColor(r: theme.heatmap.bright.r, g: theme.heatmap.bright.g, b: theme.heatmap.bright.b)
-                        }
-                        .frame(width: 48, height: 16)
-                        .cornerRadius(3)
+                    Button {
+                        viewModel.selectedThemeId = theme.id
+                    } label: {
+                        HStack {
+                            HStack(spacing: 2) {
+                                ThemeSwatchColor(r: theme.heatmap.dim.r, g: theme.heatmap.dim.g, b: theme.heatmap.dim.b)
+                                ThemeSwatchColor(r: theme.heatmap.mid.r, g: theme.heatmap.mid.g, b: theme.heatmap.mid.b)
+                                ThemeSwatchColor(r: theme.heatmap.bright.r, g: theme.heatmap.bright.g, b: theme.heatmap.bright.b)
+                            }
+                            .frame(width: 48, height: 16)
+                            .cornerRadius(3)
 
-                        Text(theme.name)
+                            Text(theme.name)
+                                .foregroundColor(.primary)
 
-                        Spacer()
+                            Spacer()
 
-                        if theme.id == viewModel.selectedThemeId {
-                            Image(systemName: "checkmark")
-                                .foregroundColor(.accentColor)
+                            if theme.id == viewModel.selectedThemeId {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.accentColor)
+                            }
                         }
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture { viewModel.selectedThemeId = theme.id }
+                    .buttonStyle(.plain)
                 }
             }
 
@@ -53,6 +56,7 @@ struct SettingsView: View {
                 }
 
                 Toggle("Show photo heatmap", isOn: $viewModel.heatmapEnabled)
+                Toggle("HDR", isOn: $viewModel.hdrEnabled)
             }
 
             Section("Photos") {

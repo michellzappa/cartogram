@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import MapCore
 
 struct ContentView: View {
@@ -7,135 +8,232 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var dragOffset: CGSize = .zero
     @State private var currentRotation: Angle = .zero
+    @State private var sharePayload: SharePayload?
+
+    private var errorBannerTopPadding: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 24 : 60
+    }
+
+    private var recenterButtonTopPadding: CGFloat {
+        UIDevice.current.userInterfaceIdiom == .pad ? 24 : 56
+    }
 
     var body: some View {
         ZStack {
-            wallpaperBackground
+            WallpaperBackgroundView(image: viewModel.generatedImage)
                 .offset(dragOffset)
                 .rotationEffect(currentRotation)
                 .gesture(
                     DragGesture(minimumDistance: 10)
-                        .onChanged { value in
-                            dragOffset = value.translation
-                        }
-                        .onEnded { value in
-                            viewModel.applyPan(
-                                dx: Double(value.translation.width),
-                                dy: Double(value.translation.height)
-                            )
-                            // Don't reset dragOffset yet — keep old image shifted
-                            // until the new render arrives
-                        }
+                        .onChanged(handlePanChanged)
+                        .onEnded(handlePanEnded)
                 )
                 .simultaneousGesture(
                     RotationGesture()
-                        .onChanged { angle in
-                            currentRotation = angle
-                        }
-                        .onEnded { angle in
-                            viewModel.rotation += angle.radians
-                            // Don't reset currentRotation — cleared when new image arrives
-                            viewModel.generate()
-                        }
+                        .onChanged(handleRotationChanged)
+                        .onEnded(handleRotationEnded)
                 )
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.25)) { showControls.toggle() }
-                }
+                .onTapGesture(perform: toggleControls)
 
             if showControls {
                 VStack(spacing: 0) {
                     Spacer()
-                    controlsPanel
+                    GeneratorControlsPanel(
+                        locationString: viewModel.locationString,
+                        isGenerating: viewModel.isGenerating,
+                        canZoomOut: viewModel.zoom > 10,
+                        canZoomIn: viewModel.zoom < 16,
+                        canExport: viewModel.generatedImage != nil,
+                        onOpenSettings: openSettings,
+                        onZoomOut: zoomOut,
+                        onZoomIn: zoomIn,
+                        onGenerate: viewModel.generate,
+                        onShare: queueShareSheet,
+                        onSave: viewModel.saveToPhotos
+                    )
                 }
                 .transition(.opacity)
             }
 
-            // Recenter button (top-left, only when panned/rotated)
             if showControls && viewModel.isPanned {
-                VStack {
-                    HStack {
-                        Button { viewModel.recenter() } label: {
-                            Image(systemName: "location.circle.fill")
-                                .font(.title3)
-                                .foregroundStyle(.white.opacity(0.8))
-                                .frame(width: 40, height: 40)
-                                .background(Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
-                        }
-                        .padding(.leading, 16)
-                        .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 56)
-                        Spacer()
-                    }
-                    Spacer()
-                }
+                RecenterButtonOverlay(
+                    topPadding: recenterButtonTopPadding,
+                    onRecenter: viewModel.recenter
+                )
                 .transition(.opacity)
             }
 
-            if viewModel.locationDenied && viewModel.generatedImage == nil {
-                permissionBanner(
-                    icon: "location.slash.fill",
-                    title: "Location Access Needed",
-                    message: "Cartogram needs your location to center the map. You can also set a manual address in Settings.",
-                    showSettings: true
-                )
-            } else if let error = viewModel.lastError {
-                VStack {
-                    errorBanner(error)
-                    Spacer()
-                }
-                .padding(.top, UIDevice.current.userInterfaceIdiom == .pad ? 24 : 60)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            bannerOverlay
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
-        .onAppear {
-            viewModel.generate()
+        .task {
+            generateIfNeeded()
         }
-        .sheet(isPresented: $viewModel.showShareSheet) {
-            if let image = viewModel.generatedImage {
-                ShareSheet(items: [image])
-            }
-        }
-        .onChange(of: viewModel.generationId) { _ in
-            dragOffset = .zero
-            currentRotation = .zero
+        .sheet(item: $sharePayload) { payload in
+            ShareSheet(items: [payload.image])
         }
         .sheet(isPresented: $showSettings) {
-            settingsSheet
+            GeneratorSettingsView(
+                viewModel: viewModel,
+                onDone: dismissSettings
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .onChange(of: viewModel.generationId) { _ in
+            resetTransientTransforms()
         }
     }
 
-    // MARK: - Wallpaper Background
-
     @ViewBuilder
-    private var wallpaperBackground: some View {
-        GeometryReader { geo in
-            if let image = viewModel.generatedImage {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
-            } else {
-                ZStack {
-                    Color(white: 0.06)
-                    VStack(spacing: 10) {
-                        Image(systemName: "map.fill")
-                            .font(.system(size: 40, weight: .light))
-                            .foregroundStyle(.white.opacity(0.15))
-                        Text("Cartogram")
-                            .font(.title3.weight(.medium))
-                            .foregroundStyle(.white.opacity(0.2))
-                    }
+    private var bannerOverlay: some View {
+        if viewModel.locationDenied && viewModel.generatedImage == nil {
+            PermissionBannerView(
+                icon: "location.slash.fill",
+                title: "Location Access Needed",
+                message: "Cartogram needs your location to center the map. You can also set a manual address in Settings.",
+                onOpenSettings: openAppSettings,
+                onUseAddressInstead: useAddressMode
+            )
+        } else if let error = viewModel.lastError {
+            VStack {
+                ErrorBannerView(message: error)
+                Spacer()
+            }
+            .padding(.top, errorBannerTopPadding)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private func generateIfNeeded() {
+        guard viewModel.generatedImage == nil, !viewModel.isGenerating else { return }
+        viewModel.generate()
+    }
+
+    private func openSettings() {
+        showSettings = true
+    }
+
+    private func dismissSettings() {
+        showSettings = false
+        viewModel.resolveLocation()
+    }
+
+    private func zoomOut() {
+        guard viewModel.zoom > 10 else { return }
+        viewModel.zoom -= 1
+    }
+
+    private func zoomIn() {
+        guard viewModel.zoom < 16 else { return }
+        viewModel.zoom += 1
+    }
+
+    private func queueShareSheet() {
+        guard let image = viewModel.generatedImage else { return }
+        sharePayload = SharePayload(image: image)
+    }
+
+    private func toggleControls() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            showControls.toggle()
+        }
+    }
+
+    private func useAddressMode() {
+        viewModel.locationMode = .address
+        showSettings = true
+    }
+
+    private func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    private func resetTransientTransforms() {
+        dragOffset = .zero
+        currentRotation = .zero
+    }
+
+    private func handlePanChanged(_ value: DragGesture.Value) {
+        dragOffset = value.translation
+    }
+
+    private func handlePanEnded(_ value: DragGesture.Value) {
+        viewModel.applyPan(
+            dx: Double(value.translation.width),
+            dy: Double(value.translation.height)
+        )
+    }
+
+    private func handleRotationChanged(_ angle: Angle) {
+        currentRotation = angle
+    }
+
+    private func handleRotationEnded(_ angle: Angle) {
+        viewModel.rotation += angle.radians
+        viewModel.generate()
+    }
+}
+
+private struct SharePayload: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+private struct WallpaperBackgroundView: View {
+    let image: UIImage?
+
+    var body: some View {
+        GeometryReader { geometry in
+            Group {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    WallpaperPlaceholderView()
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+        }
+    }
+}
+
+private struct WallpaperPlaceholderView: View {
+    var body: some View {
+        ZStack {
+            Color(white: 0.06)
+
+            VStack(spacing: 10) {
+                Image(systemName: "map.fill")
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundStyle(.white.opacity(0.15))
+
+                Text("Cartogram")
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.2))
             }
         }
     }
+}
 
-    // MARK: - Controls Panel
+private struct GeneratorControlsPanel: View {
+    let locationString: String
+    let isGenerating: Bool
+    let canZoomOut: Bool
+    let canZoomIn: Bool
+    let canExport: Bool
+    let onOpenSettings: () -> Void
+    let onZoomOut: () -> Void
+    let onZoomIn: () -> Void
+    let onGenerate: () -> Void
+    let onShare: () -> Void
+    let onSave: () -> Void
 
-    private var controlsPanel: some View {
+    var body: some View {
         VStack(spacing: 0) {
             Capsule()
                 .fill(.white.opacity(0.3))
@@ -145,13 +243,13 @@ struct ContentView: View {
 
             VStack(spacing: 14) {
                 HStack {
-                    Label(viewModel.locationString, systemImage: "location.fill")
+                    Label(locationString, systemImage: "location.fill")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.7))
 
                     Spacer()
 
-                    Button { showSettings = true } label: {
+                    Button(action: onOpenSettings) {
                         Image(systemName: "gearshape.fill")
                             .font(.caption.weight(.medium))
                             .frame(width: 38, height: 38)
@@ -161,27 +259,23 @@ struct ContentView: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button { if viewModel.zoom > 10 { viewModel.zoom -= 1 } } label: {
-                        Image(systemName: "minus")
-                            .font(.caption.weight(.medium))
-                            .frame(width: 34, height: 34)
-                            .background(Circle().fill(.white.opacity(0.1)))
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
+                    CircleIconButton(
+                        systemName: "minus",
+                        isEnabled: canZoomOut,
+                        action: onZoomOut
+                    )
 
-                    Button { if viewModel.zoom < 16 { viewModel.zoom += 1 } } label: {
-                        Image(systemName: "plus")
-                            .font(.caption.weight(.medium))
-                            .frame(width: 34, height: 34)
-                            .background(Circle().fill(.white.opacity(0.1)))
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
+                    CircleIconButton(
+                        systemName: "plus",
+                        isEnabled: canZoomIn,
+                        action: onZoomIn
+                    )
 
                     Spacer()
 
-                    Button(action: { viewModel.generate() }) {
+                    Button(action: onGenerate) {
                         HStack(spacing: 6) {
-                            if viewModel.isGenerating {
+                            if isGenerating {
                                 ProgressView()
                                     .tint(.white)
                                     .scaleEffect(0.7)
@@ -189,6 +283,7 @@ struct ContentView: View {
                                 Image(systemName: "paintbrush.fill")
                                     .font(.subheadline)
                             }
+
                             Text("Generate")
                                 .font(.subheadline.weight(.semibold))
                         }
@@ -196,28 +291,22 @@ struct ContentView: View {
                         .padding(.vertical, 12)
                         .background(
                             Capsule()
-                                .fill(viewModel.isGenerating ? .white.opacity(0.1) : .white.opacity(0.2))
+                                .fill(isGenerating ? .white.opacity(0.1) : .white.opacity(0.2))
                         )
                         .foregroundStyle(.white)
                     }
-                    .disabled(viewModel.isGenerating)
+                    .disabled(isGenerating)
 
-                    if viewModel.generatedImage != nil {
-                        Button(action: { viewModel.showShareSheet = true }) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.caption.weight(.medium))
-                                .frame(width: 38, height: 38)
-                                .background(Circle().fill(.white.opacity(0.12)))
-                                .foregroundStyle(.white)
-                        }
+                    if canExport {
+                        CircleIconButton(
+                            systemName: "square.and.arrow.up",
+                            action: onShare
+                        )
 
-                        Button(action: { viewModel.saveToPhotos() }) {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.caption.weight(.medium))
-                                .frame(width: 38, height: 38)
-                                .background(Circle().fill(.white.opacity(0.12)))
-                                .foregroundStyle(.white)
-                        }
+                        CircleIconButton(
+                            systemName: "square.and.arrow.down",
+                            action: onSave
+                        )
                     }
                 }
             }
@@ -233,92 +322,62 @@ struct ContentView: View {
         .frame(maxWidth: 500)
         .padding(.horizontal, 12)
     }
+}
 
-    // MARK: - Settings Sheet
+private struct CircleIconButton: View {
+    let systemName: String
+    var isEnabled = true
+    let action: () -> Void
 
-    private var settingsSheet: some View {
-        NavigationStack {
-            Form {
-                Section("Theme") {
-                    ForEach(Themes.all, id: \.id) { theme in
-                        Button {
-                            viewModel.selectedThemeId = theme.id
-                        } label: {
-                            HStack(spacing: 12) {
-                                HStack(spacing: 0) {
-                                    Color(red: Double(theme.heatmap.dim.r), green: Double(theme.heatmap.dim.g), blue: Double(theme.heatmap.dim.b))
-                                    Color(red: Double(theme.heatmap.mid.r), green: Double(theme.heatmap.mid.g), blue: Double(theme.heatmap.mid.b))
-                                    Color(red: Double(theme.heatmap.bright.r), green: Double(theme.heatmap.bright.g), blue: Double(theme.heatmap.bright.b))
-                                }
-                                .frame(width: 32, height: 20)
-                                .clipShape(RoundedRectangle(cornerRadius: 5))
-
-                                Text(theme.name)
-                                    .foregroundStyle(.primary)
-
-                                Spacer()
-
-                                if theme.id == viewModel.selectedThemeId {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.blue)
-                                        .fontWeight(.semibold)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Section("Map") {
-                    Toggle("Heatmap", isOn: $viewModel.heatmapEnabled)
-                    Toggle("HDR", isOn: $viewModel.hdrEnabled)
-                }
-
-                Section("Location") {
-                    Picker("Source", selection: $viewModel.locationModeRaw) {
-                        ForEach(LocationMode.allCases, id: \.rawValue) { mode in
-                            Text(mode.label).tag(mode.rawValue)
-                        }
-                    }
-                    if viewModel.locationMode == .address {
-                        TextField("Location", text: $viewModel.defaultAddress)
-                            .textContentType(.fullStreetAddress)
-                    }
-                }
-
-                Section("Photos") {
-                    HStack {
-                        Text("Geotagged photos")
-                        Spacer()
-                        Text(viewModel.photoCount > 0 ? "\(viewModel.photoCount.formatted())" : "—")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("About") {
-                    Text("Map data © OpenStreetMap contributors · OpenFreeMap")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        showSettings = false
-                        viewModel.resolveLocation()
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.caption.weight(.medium))
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(.white.opacity(0.12)))
+                .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.4))
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .disabled(!isEnabled)
     }
+}
 
-    // MARK: - Error Banner
+private struct RecenterButtonOverlay: View {
+    let topPadding: CGFloat
+    let onRecenter: () -> Void
 
-    private func permissionBanner(icon: String, title: String, message: String, showSettings: Bool) -> some View {
+    var body: some View {
+        VStack {
+            HStack {
+                Button(action: onRecenter) {
+                    Image(systemName: "location.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .frame(width: 40, height: 40)
+                        .background(
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .environment(\.colorScheme, .dark)
+                        )
+                }
+                .padding(.leading, 16)
+                .padding(.top, topPadding)
+
+                Spacer()
+            }
+
+            Spacer()
+        }
+    }
+}
+
+private struct PermissionBannerView: View {
+    let icon: String
+    let title: String
+    let message: String
+    let onOpenSettings: () -> Void
+    let onUseAddressInstead: () -> Void
+
+    var body: some View {
         VStack(spacing: 16) {
             Spacer()
 
@@ -338,30 +397,25 @@ struct ContentView: View {
                     .padding(.horizontal, 20)
             }
 
-            if showSettings {
-                HStack(spacing: 12) {
-                    Button("Open Settings") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) {
-                            UIApplication.shared.open(url)
-                        }
-                    }
+            HStack(spacing: 12) {
+                Button("Open Settings", action: onOpenSettings)
                     .buttonStyle(.borderedProminent)
 
-                    Button("Use Address Instead") {
-                        viewModel.locationMode = .address
-                        self.showSettings = true
-                    }
+                Button("Use Address Instead", action: onUseAddressInstead)
                     .buttonStyle(.bordered)
                     .tint(.white)
-                }
             }
 
             Spacer()
         }
         .frame(maxWidth: 500)
     }
+}
 
-    private func errorBanner(_ message: String) -> some View {
+private struct ErrorBannerView: View {
+    let message: String
+
+    var body: some View {
         Text(message)
             .font(.caption.weight(.medium))
             .foregroundStyle(.white)
@@ -370,14 +424,16 @@ struct ContentView: View {
             .background(
                 Capsule()
                     .fill(.red.opacity(0.7))
-                    .background(Capsule().fill(.ultraThinMaterial).environment(\.colorScheme, .dark))
+                    .background(
+                        Capsule()
+                            .fill(.ultraThinMaterial)
+                            .environment(\.colorScheme, .dark)
+                    )
             )
             .clipShape(Capsule())
             .padding(.horizontal, 40)
     }
 }
-
-// MARK: - Share Sheet
 
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]

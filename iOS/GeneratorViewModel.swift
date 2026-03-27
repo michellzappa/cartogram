@@ -19,40 +19,29 @@ enum LocationMode: String, CaseIterable {
     }
 }
 
-class GeneratorViewModel: ObservableObject {
+final class GeneratorViewModel: ObservableObject {
     @AppStorage("defaultAddress") var defaultAddress: String = "" { didSet { clearCenter(); regenerateIfNeeded() } }
     @AppStorage("locationMode") var locationModeRaw: String = "auto" { didSet { clearCenter(); regenerateIfNeeded() } }
     @AppStorage("defaultZoom") var zoom: Int = 14 { didSet { regenerateIfNeeded() } }
     @AppStorage("heatmapEnabled") var heatmapEnabled: Bool = true { didSet { regenerateIfNeeded() } }
     @AppStorage("selectedTheme") var selectedThemeId: String = "cyberpunk" { didSet { regenerateIfNeeded() } }
     @AppStorage("hdrEnabled") var hdrEnabled: Bool = true { didSet { regenerateIfNeeded() } }
-    var locationMode: LocationMode {
-        get { LocationMode(rawValue: locationModeRaw) ?? .auto }
-        set { locationModeRaw = newValue.rawValue }
-    }
 
     @Published var isGenerating = false
     @Published var progress: String = ""
     @Published var generatedImage: UIImage?
     @Published var lastError: String?
     @Published var locationString: String = "Locating..."
-    @Published var showShareSheet = false
-    @Published var rotation: Double = 0 // radians
-    @Published var generationId: Int = 0 // incremented on each new render
+    @Published var rotation: Double = 0
+    @Published var generationId: Int = 0
     @Published var photoCount: Int = 0
     @Published var locationDenied = false
     @Published var photosDenied = false
 
-    // Map center (set after first generate, updated by pan)
-    private var centerLat: Double?
-    private var centerLon: Double?
-    // Original resolved location (for recenter)
-    private var originalLat: Double?
-    private var originalLon: Double?
-    // Queued regeneration (if generate() called while already generating)
-    private var pendingGenerate = false
-    // Last HDR CIImage for saving
-    private var lastCIImage: CIImage?
+    var locationMode: LocationMode {
+        get { LocationMode(rawValue: locationModeRaw) ?? .auto }
+        set { locationModeRaw = newValue.rawValue }
+    }
 
     var selectedTheme: MapTheme { Themes.byId(selectedThemeId) }
 
@@ -60,6 +49,33 @@ class GeneratorViewModel: ObservableObject {
         guard let cLat = centerLat, let oLat = originalLat,
               let cLon = centerLon, let oLon = originalLon else { return false }
         return abs(cLat - oLat) > 0.0001 || abs(cLon - oLon) > 0.0001 || abs(rotation) > 0.01
+    }
+
+    private var centerLat: Double?
+    private var centerLon: Double?
+    private var originalLat: Double?
+    private var originalLon: Double?
+    private var pendingGenerate = false
+    private var lastCIImage: CIImage?
+
+    private let photoCacheLock = NSLock()
+    private var cachedPhotoLocations: [LocationPoint]?
+    private var cachedPhotoAuthorizationStatus: PHAuthorizationStatus?
+
+    private struct ResolveSnapshot {
+        let defaultAddress: String
+        let locationMode: LocationMode
+    }
+
+    private struct RenderSnapshot {
+        let defaultAddress: String
+        let locationMode: LocationMode
+        let zoom: Int
+        let heatmapEnabled: Bool
+        let selectedTheme: MapTheme
+        let hdrEnabled: Bool
+        let rotation: Double
+        let center: (lat: Double, lon: Double)?
     }
 
     private func clearCenter() {
@@ -73,16 +89,42 @@ class GeneratorViewModel: ObservableObject {
         if generatedImage != nil { generate() }
     }
 
+    private func makeResolveSnapshot() -> ResolveSnapshot {
+        ResolveSnapshot(
+            defaultAddress: defaultAddress,
+            locationMode: locationMode
+        )
+    }
+
+    private func makeRenderSnapshot() -> RenderSnapshot {
+        RenderSnapshot(
+            defaultAddress: defaultAddress,
+            locationMode: locationMode,
+            zoom: zoom,
+            heatmapEnabled: heatmapEnabled,
+            selectedTheme: selectedTheme,
+            hdrEnabled: hdrEnabled,
+            rotation: rotation,
+            center: centerLat.flatMap { lat in
+                centerLon.map { lon in (lat: lat, lon: lon) }
+            }
+        )
+    }
+
     func resolveLocation() {
+        let snapshot = makeResolveSnapshot()
+
         LocationService.shared.ensureAuthorized()
+        updatePermissionStates()
+
         DispatchQueue.global(qos: .utility).async { [self] in
-            switch locationMode {
+            switch snapshot.locationMode {
             case .address:
-                guard !defaultAddress.isEmpty else {
+                guard !snapshot.defaultAddress.isEmpty else {
                     DispatchQueue.main.async { self.locationString = "No address set" }
                     return
                 }
-                DispatchQueue.main.async { self.locationString = self.defaultAddress }
+                DispatchQueue.main.async { self.locationString = snapshot.defaultAddress }
 
             case .auto:
                 guard let loc = getCoreLocation() else {
@@ -92,7 +134,7 @@ class GeneratorViewModel: ObservableObject {
                 reverseGeocode(lat: loc.0, lon: loc.1)
 
             case .photos:
-                let points = fetchPhotoLocations()
+                let points = photoLocations()
                 guard let cluster = findDensestCluster(in: points) else {
                     DispatchQueue.main.async { self.locationString = "No geotagged photos" }
                     return
@@ -105,8 +147,8 @@ class GeneratorViewModel: ObservableObject {
     private func reverseGeocode(lat: Double, lon: Double) {
         let location = CLLocation(latitude: lat, longitude: lon)
         CLGeocoder().reverseGeocodeLocation(location) { placemarks, _ in
-            if let p = placemarks?.first {
-                let parts = [p.locality, p.country].compactMap { $0 }
+            if let placemark = placemarks?.first {
+                let parts = [placemark.locality, placemark.country].compactMap { $0 }
                 DispatchQueue.main.async {
                     self.locationString = parts.isEmpty
                         ? String(format: "%.4f, %.4f", lat, lon)
@@ -120,22 +162,19 @@ class GeneratorViewModel: ObservableObject {
         }
     }
 
-    /// Apply a pan offset (in screen points) and regenerate.
     func applyPan(dx: Double, dy: Double) {
         guard let lat = centerLat, let lon = centerLon else { return }
 
         let scale = Double(UIScreen.main.scale)
-        // Rotate drag vector by -rotation so pan direction is correct when map is rotated
         let angle = -rotation
-        let rdx = dx * cos(angle) - dy * sin(angle)
-        let rdy = dx * sin(angle) + dy * cos(angle)
+        let rotatedDx = dx * cos(angle) - dy * sin(angle)
+        let rotatedDy = dx * sin(angle) + dy * cos(angle)
 
-        let mapDx = rdx * scale
-        let mapDy = rdy * scale
+        let mapDx = rotatedDx * scale
+        let mapDy = rotatedDy * scale
 
-        let (cpx, cpy) = latLonToPixel(lat: lat, lon: lon, zoom: zoom)
-        // Subtract: dragging right = map center moves left
-        let (newLat, newLon) = pixelToLatLon(px: cpx - mapDx, py: cpy - mapDy, zoom: zoom)
+        let (currentPx, currentPy) = latLonToPixel(lat: lat, lon: lon, zoom: zoom)
+        let (newLat, newLon) = pixelToLatLon(px: currentPx - mapDx, py: currentPy - mapDy, zoom: zoom)
 
         centerLat = newLat
         centerLon = newLon
@@ -150,159 +189,134 @@ class GeneratorViewModel: ObservableObject {
     }
 
     func generate() {
-        guard !isGenerating else { pendingGenerate = true; return }
+        guard !isGenerating else {
+            pendingGenerate = true
+            return
+        }
+
+        let snapshot = makeRenderSnapshot()
+
         isGenerating = true
         lastError = nil
         progress = "Loading photos..."
+
         LocationService.shared.ensureAuthorized()
+        updatePermissionStates()
 
         DispatchQueue.global(qos: .userInitiated).async { [self] in
-            // Check permission states
-            let locStatus = CLLocationManager().authorizationStatus
-            DispatchQueue.main.async {
-                self.locationDenied = (locStatus == .denied || locStatus == .restricted)
-            }
+            let points = photoLocations()
+            let heatmapPoints = snapshot.heatmapEnabled && !points.isEmpty ? points : nil
 
-            let photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-            DispatchQueue.main.async {
-                self.photosDenied = (photoStatus == .denied || photoStatus == .restricted)
-            }
-
-            // Load photos
-            var heatmapPoints: [LocationPoint]?
-            let points = fetchPhotoLocations()
-            DispatchQueue.main.async { self.photoCount = points.count }
-            if heatmapEnabled && !points.isEmpty {
-                heatmapPoints = points
-            }
-
-            // Resolve location (use cached center if available from pan)
             var lat: Double
             var lon: Double
 
-            if let cLat = centerLat, let cLon = centerLon {
-                // Already have a center from previous generate or pan
-                lat = cLat; lon = cLon
+            if let center = snapshot.center {
+                lat = center.lat
+                lon = center.lon
             } else {
                 DispatchQueue.main.async { self.progress = "Resolving location..." }
 
-                switch locationMode {
+                switch snapshot.locationMode {
                 case .address:
-                    guard !defaultAddress.isEmpty, let loc = geocodeAddress(defaultAddress) else {
+                    guard !snapshot.defaultAddress.isEmpty,
+                          let loc = geocodeAddress(snapshot.defaultAddress) else {
                         DispatchQueue.main.async {
-                            self.lastError = "Could not geocode address"
-                            self.isGenerating = false
+                            self.failGeneration("Could not geocode address")
                         }
                         return
                     }
-                    lat = loc.0; lon = loc.1
+                    lat = loc.0
+                    lon = loc.1
 
                 case .auto:
                     guard let loc = getCoreLocation() else {
                         DispatchQueue.main.async {
-                            self.lastError = "Could not detect location. Grant access in System Settings → Privacy & Security → Location Services."
-                            self.isGenerating = false
+                            self.failGeneration("Could not detect location. Grant access in System Settings → Privacy & Security → Location Services.")
                         }
                         return
                     }
-                    lat = loc.0; lon = loc.1
+                    lat = loc.0
+                    lon = loc.1
 
                 case .photos:
                     guard let cluster = findDensestCluster(in: points) else {
                         DispatchQueue.main.async {
-                            self.lastError = "No geotagged photos found"
-                            self.isGenerating = false
+                            self.failGeneration("No geotagged photos found")
                         }
                         return
                     }
-                    lat = cluster.lat; lon = cluster.lon
+                    lat = cluster.lat
+                    lon = cluster.lon
                 }
 
-                // Store as both original and current center
-                originalLat = lat; originalLon = lon
-                centerLat = lat; centerLon = lon
+                DispatchQueue.main.async {
+                    self.storeResolvedCenter(lat: lat, lon: lon)
+                }
                 reverseGeocode(lat: lat, lon: lon)
             }
 
-            // Always render at exact screen pixel size (1:1)
-            var screenW = 1170, screenH = 2532
+            var screenWidth = 1170
+            var screenHeight = 2532
             DispatchQueue.main.sync {
                 let bounds = UIScreen.main.bounds
                 let scale = UIScreen.main.scale
-                screenW = Int(bounds.width * scale)
-                screenH = Int(bounds.height * scale)
+                screenWidth = Int(bounds.width * scale)
+                screenHeight = Int(bounds.height * scale)
             }
 
             DispatchQueue.main.async { self.progress = "Rendering wallpaper..." }
 
-            let theme = selectedTheme
-            let rot = self.rotation
-            let useHDR = self.hdrEnabled
-
-            if useHDR {
+            if snapshot.hdrEnabled {
                 guard let ciImage = generateMapImageHDR(
-                    lat: lat, lon: lon, zoom: zoom,
-                    width: screenW, height: screenH,
+                    lat: lat,
+                    lon: lon,
+                    zoom: snapshot.zoom,
+                    width: screenWidth,
+                    height: screenHeight,
                     heatmapPoints: heatmapPoints,
-                    theme: theme,
+                    theme: snapshot.selectedTheme,
                     intensity: 1.5,
-                    rotation: rot
+                    rotation: snapshot.rotation
                 ) else {
                     DispatchQueue.main.async {
-                        self.lastError = "Failed to generate wallpaper"
-                        self.isGenerating = false
+                        self.failGeneration("Failed to generate wallpaper")
                     }
                     return
                 }
 
-                let ciCtx = CIContext()
-                guard let cgImage = ciCtx.createCGImage(ciImage, from: ciImage.extent) else {
+                let ciContext = CIContext()
+                guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
                     DispatchQueue.main.async {
-                        self.lastError = "Failed to create preview image"
-                        self.isGenerating = false
+                        self.failGeneration("Failed to create preview image")
                     }
                     return
                 }
-                let uiImage = UIImage(cgImage: cgImage)
 
+                let image = UIImage(cgImage: cgImage)
                 DispatchQueue.main.async {
-                    self.generatedImage = uiImage
-                    self.lastCIImage = ciImage
-                    self.generationId += 1
-                    self.progress = "Done!"
-                    self.isGenerating = false
-                    if self.pendingGenerate {
-                        self.pendingGenerate = false
-                        self.generate()
-                    }
+                    self.finishGeneration(image: image, ciImage: ciImage)
                 }
             } else {
                 guard let cgImage = generateMapImage(
-                    lat: lat, lon: lon, zoom: zoom,
-                    width: screenW, height: screenH,
+                    lat: lat,
+                    lon: lon,
+                    zoom: snapshot.zoom,
+                    width: screenWidth,
+                    height: screenHeight,
                     heatmapPoints: heatmapPoints,
-                    theme: theme,
+                    theme: snapshot.selectedTheme,
                     intensity: 1.5,
-                    rotation: rot
+                    rotation: snapshot.rotation
                 ) else {
                     DispatchQueue.main.async {
-                        self.lastError = "Failed to generate wallpaper"
-                        self.isGenerating = false
+                        self.failGeneration("Failed to generate wallpaper")
                     }
                     return
                 }
-                let uiImage = UIImage(cgImage: cgImage)
 
+                let image = UIImage(cgImage: cgImage)
                 DispatchQueue.main.async {
-                    self.generatedImage = uiImage
-                    self.lastCIImage = nil
-                    self.generationId += 1
-                    self.progress = "Done!"
-                    self.isGenerating = false
-                    if self.pendingGenerate {
-                        self.pendingGenerate = false
-                        self.generate()
-                    }
+                    self.finishGeneration(image: image, ciImage: nil)
                 }
             }
         }
@@ -310,17 +324,19 @@ class GeneratorViewModel: ObservableObject {
 
     func saveToPhotos() {
         if let ciImage = lastCIImage {
-            // HDR: write HEIF 10-bit PQ to temp file
             let tempURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("cartogram_hdr_\(Int(Date().timeIntervalSince1970)).heic")
+
             guard let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else { return }
-            let ctx = CIContext(options: [
+
+            let context = CIContext(options: [
                 .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
             ])
+
             do {
-                try ctx.writeHEIF10Representation(of: ciImage, to: tempURL, colorSpace: colorSpace)
+                try context.writeHEIF10Representation(of: ciImage, to: tempURL, colorSpace: colorSpace)
             } catch {
-                DispatchQueue.main.async { self.lastError = "Failed to encode HDR image" }
+                lastError = "Failed to encode HDR image"
                 return
             }
 
@@ -337,7 +353,6 @@ class GeneratorViewModel: ObservableObject {
                 }
             }
         } else if let image = generatedImage {
-            // SDR fallback
             PHPhotoLibrary.shared().performChanges {
                 PHAssetChangeRequest.creationRequestForAsset(from: image)
             } completionHandler: { success, error in
@@ -350,5 +365,72 @@ class GeneratorViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func storeResolvedCenter(lat: Double, lon: Double) {
+        originalLat = lat
+        originalLon = lon
+        centerLat = lat
+        centerLon = lon
+    }
+
+    private func finishGeneration(image: UIImage, ciImage: CIImage?) {
+        generatedImage = image
+        lastCIImage = ciImage
+        generationId += 1
+        progress = "Done!"
+        isGenerating = false
+        restartQueuedGenerationIfNeeded()
+    }
+
+    private func failGeneration(_ message: String) {
+        lastError = message
+        isGenerating = false
+        restartQueuedGenerationIfNeeded()
+    }
+
+    private func restartQueuedGenerationIfNeeded() {
+        guard pendingGenerate else { return }
+        pendingGenerate = false
+        generate()
+    }
+
+    private func updatePermissionStates() {
+        let locationStatus = CLLocationManager().authorizationStatus
+        let photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        locationDenied = locationStatus == .denied || locationStatus == .restricted
+        photosDenied = photoStatus == .denied || photoStatus == .restricted
+    }
+
+    private func photoLocations(forceRefresh: Bool = false) -> [LocationPoint] {
+        let currentStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+
+        photoCacheLock.lock()
+        if !forceRefresh,
+           let cachedPhotoLocations,
+           cachedPhotoAuthorizationStatus == currentStatus {
+            photoCacheLock.unlock()
+            DispatchQueue.main.async {
+                self.photoCount = cachedPhotoLocations.count
+                self.photosDenied = currentStatus == .denied || currentStatus == .restricted
+            }
+            return cachedPhotoLocations
+        }
+        photoCacheLock.unlock()
+
+        let points = fetchPhotoLocations()
+        let resolvedStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+
+        photoCacheLock.lock()
+        cachedPhotoLocations = points
+        cachedPhotoAuthorizationStatus = resolvedStatus
+        photoCacheLock.unlock()
+
+        DispatchQueue.main.async {
+            self.photoCount = points.count
+            self.photosDenied = resolvedStatus == .denied || resolvedStatus == .restricted
+        }
+
+        return points
     }
 }
