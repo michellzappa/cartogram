@@ -42,10 +42,9 @@ wallpaper,map,heatmap,photos,location,travel,desktop,background,geotagged,theme
 ## Promotional Text (170 chars max)
 Your travels, visualized. Cartogram turns your photo locations into stunning map wallpapers with beautiful heatmap overlays.
 
-## What's New (Version 1.0.2)
-- HDR wallpaper output (10-bit PQ) for vivid heatmap glow on supported displays
-- HDR toggle in settings (on by default)
-- Improved provisioning and signing for App Store distribution
+## What's New (Version 1.1.0)
+- Internal improvements and stability enhancements
+- Preparing for future feature updates
 
 ---
 

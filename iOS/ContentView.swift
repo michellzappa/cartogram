@@ -3,11 +3,14 @@ import UIKit
 import MapCore
 
 struct ContentView: View {
+    private static let pinchStepThreshold: CGFloat = 0.12
+
     @ObservedObject var viewModel: GeneratorViewModel
     @State private var showControls = true
     @State private var showSettings = false
     @State private var dragOffset: CGSize = .zero
     @State private var currentRotation: Angle = .zero
+    @State private var currentMagnification: CGFloat = 1
     @State private var sharePayload: SharePayload?
 
     private var errorBannerTopPadding: CGFloat {
@@ -23,6 +26,7 @@ struct ContentView: View {
             WallpaperBackgroundView(image: viewModel.generatedImage)
                 .offset(dragOffset)
                 .rotationEffect(currentRotation)
+                .scaleEffect(currentMagnification)
                 .gesture(
                     DragGesture(minimumDistance: 10)
                         .onChanged(handlePanChanged)
@@ -32,6 +36,11 @@ struct ContentView: View {
                     RotationGesture()
                         .onChanged(handleRotationChanged)
                         .onEnded(handleRotationEnded)
+                )
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged(handleMagnificationChanged)
+                        .onEnded(handleMagnificationEnded)
                 )
                 .onTapGesture(perform: toggleControls)
 
@@ -154,6 +163,7 @@ struct ContentView: View {
     private func resetTransientTransforms() {
         dragOffset = .zero
         currentRotation = .zero
+        currentMagnification = 1
     }
 
     private func handlePanChanged(_ value: DragGesture.Value) {
@@ -174,6 +184,65 @@ struct ContentView: View {
     private func handleRotationEnded(_ angle: Angle) {
         viewModel.rotation += angle.radians
         viewModel.generate()
+    }
+
+    private func handleMagnificationChanged(_ value: CGFloat) {
+        currentMagnification = previewMagnification(for: value)
+    }
+
+    private func handleMagnificationEnded(_ value: CGFloat) {
+        let zoomDelta = zoomDelta(for: value)
+
+        guard zoomDelta != 0 else {
+            currentMagnification = 1
+            return
+        }
+
+        let newZoom = min(max(viewModel.zoom + zoomDelta, 10), 16)
+        guard newZoom != viewModel.zoom else {
+            currentMagnification = 1
+            return
+        }
+
+        // Keep the preview scale visible until the regenerated image arrives.
+        currentMagnification = previewScale(for: zoomDelta)
+        viewModel.zoom = newZoom
+    }
+
+    private func zoomDelta(for scale: CGFloat) -> Int {
+        if scale > 1 {
+            return (scale - 1) >= Self.pinchStepThreshold ? 1 : 0
+        } else if scale < 1 {
+            return (1 - scale) >= Self.pinchStepThreshold ? -1 : 0
+        } else {
+            return 0
+        }
+    }
+
+    private func previewMagnification(for scale: CGFloat) -> CGFloat {
+        if scale > 1 {
+            let progress = normalizedPinchProgress(for: scale - 1)
+            let easedProgress = easedPinchProgress(progress)
+            return 1 + easedProgress
+        } else if scale < 1 {
+            let progress = normalizedPinchProgress(for: 1 - scale)
+            let easedProgress = easedPinchProgress(progress)
+            return 1 - (0.5 * easedProgress)
+        } else {
+            return 1
+        }
+    }
+
+    private func normalizedPinchProgress(for delta: CGFloat) -> CGFloat {
+        min(delta / Self.pinchStepThreshold, 1)
+    }
+
+    private func easedPinchProgress(_ progress: CGFloat) -> CGFloat {
+        1 - pow(1 - progress, 2)
+    }
+
+    private func previewScale(for zoomDelta: Int) -> CGFloat {
+        zoomDelta > 0 ? 2 : 0.5
     }
 }
 

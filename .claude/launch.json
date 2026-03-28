@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "screenshots",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "screenshots", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "tiny-screenshots",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "../tiny/screenshots", "dev"],
+      "port": 3001
+    }
+  ]
+}
