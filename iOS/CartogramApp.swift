@@ -23,6 +23,7 @@ struct CartogramApp: App {
             }
             .task {
                 await store.configure()
+                await store.loadProduct()
             }
         }
     }

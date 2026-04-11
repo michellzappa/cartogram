@@ -27,6 +27,13 @@ final class GeneratorViewModel: ObservableObject {
     @AppStorage("heatmapEnabled") var heatmapEnabled: Bool = true { didSet { regenerateIfNeeded() } }
     @AppStorage("selectedTheme") var selectedThemeId: String = "cyberpunk" { didSet { regenerateIfNeeded() } }
     @AppStorage("hdrEnabled") var hdrEnabled: Bool = true { didSet { regenerateIfNeeded() } }
+    @AppStorage("photoAlbumId") var photoAlbumId: String = "" {
+        didSet {
+            guard oldValue != photoAlbumId else { return }
+            invalidatePhotoCache()
+            regenerateIfNeeded()
+        }
+    }
 
     @Published var isGenerating = false
     @Published var progress: String = ""
@@ -34,6 +41,8 @@ final class GeneratorViewModel: ObservableObject {
     @Published var lastError: String?
     @Published var locationString: String = "Locating..."
     @Published var photoCount: Int = 0
+    @Published var availableAlbums: [PhotoAlbum] = []
+    private var albumsLoaded = false
 
     var locationMode: LocationMode {
         get { LocationMode(rawValue: locationModeRaw) ?? .auto }
@@ -50,6 +59,31 @@ final class GeneratorViewModel: ObservableObject {
     private let photoCacheLock = NSLock()
     private var cachedPhotoLocations: [LocationPoint]?
     private var cachedPhotoAuthorizationStatus: PHAuthorizationStatus?
+    private var cachedPhotoAlbumId: String?
+
+    private func invalidatePhotoCache() {
+        photoCacheLock.lock()
+        cachedPhotoLocations = nil
+        cachedPhotoAuthorizationStatus = nil
+        cachedPhotoAlbumId = nil
+        photoCacheLock.unlock()
+    }
+
+    func loadAlbumsIfNeeded() {
+        guard !albumsLoaded else { return }
+        albumsLoaded = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let albums = fetchUserPhotoAlbums()
+            DispatchQueue.main.async {
+                self?.availableAlbums = albums
+            }
+        }
+    }
+
+    func reloadAlbums() {
+        albumsLoaded = false
+        loadAlbumsIfNeeded()
+    }
 
     private struct ResolveSnapshot {
         let defaultAddress: String
@@ -339,11 +373,13 @@ final class GeneratorViewModel: ObservableObject {
 
     private func photoLocations(forceRefresh: Bool = false) -> [LocationPoint] {
         let currentStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        let albumId = photoAlbumId
 
         photoCacheLock.lock()
         if !forceRefresh,
            let cachedPhotoLocations,
-           cachedPhotoAuthorizationStatus == currentStatus {
+           cachedPhotoAuthorizationStatus == currentStatus,
+           cachedPhotoAlbumId == albumId {
             photoCacheLock.unlock()
             DispatchQueue.main.async {
                 self.photoCount = cachedPhotoLocations.count
@@ -352,12 +388,13 @@ final class GeneratorViewModel: ObservableObject {
         }
         photoCacheLock.unlock()
 
-        let points = fetchPhotoLocations()
+        let points = fetchPhotoLocations(albumLocalIdentifier: albumId.isEmpty ? nil : albumId)
         let resolvedStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
 
         photoCacheLock.lock()
         cachedPhotoLocations = points
         cachedPhotoAuthorizationStatus = resolvedStatus
+        cachedPhotoAlbumId = albumId
         photoCacheLock.unlock()
 
         DispatchQueue.main.async {

@@ -5,6 +5,7 @@ import MapCore
 struct ContentView: View {
     private static let pinchStepThreshold: CGFloat = 0.12
 
+    @EnvironmentObject private var store: StoreManager
     @ObservedObject var viewModel: GeneratorViewModel
     @State private var showControls = true
     @State private var showSettings = false
@@ -12,6 +13,15 @@ struct ContentView: View {
     @State private var currentRotation: Angle = .zero
     @State private var currentMagnification: CGFloat = 1
     @State private var sharePayload: SharePayload?
+    @State private var unlockNudgeMessage: String?
+    @State private var unlockNudgeTask: Task<Void, Never>?
+
+    private var maxZoom: Int { 16 }
+
+    private var themeAccent: Color {
+        let mid = viewModel.selectedTheme.heatmap.mid
+        return Color(red: Double(mid.r), green: Double(mid.g), blue: Double(mid.b))
+    }
 
     private var errorBannerTopPadding: CGFloat {
         UIDevice.current.userInterfaceIdiom == .pad ? 24 : 60
@@ -51,14 +61,14 @@ struct ContentView: View {
                         locationString: viewModel.locationString,
                         isGenerating: viewModel.isGenerating,
                         canZoomOut: viewModel.zoom > 10,
-                        canZoomIn: viewModel.zoom < 16,
+                        canZoomIn: viewModel.zoom < maxZoom,
                         canExport: viewModel.generatedImage != nil,
+                        themeAccent: themeAccent,
                         onOpenSettings: openSettings,
                         onZoomOut: zoomOut,
                         onZoomIn: zoomIn,
                         onGenerate: viewModel.generate,
-                        onShare: queueShareSheet,
-                        onSave: viewModel.saveToPhotos
+                        onShare: queueShareSheet
                     )
                 }
                 .transition(.opacity)
@@ -73,6 +83,7 @@ struct ContentView: View {
             }
 
             bannerOverlay
+            unlockNudgeOverlay
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
@@ -92,6 +103,14 @@ struct ContentView: View {
         }
         .onChange(of: viewModel.generationId) { _ in
             resetTransientTransforms()
+        }
+        .onChange(of: store.isConfigured) { isConfigured in
+            guard isConfigured else { return }
+            enforceEntitlementLimits()
+            generateIfNeeded()
+        }
+        .onChange(of: store.isPro) { _ in
+            enforceEntitlementLimits()
         }
     }
 
@@ -115,9 +134,49 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private var unlockNudgeOverlay: some View {
+        if let unlockNudgeMessage {
+            VStack {
+                Text(unlockNudgeMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule()
+                            .fill(.orange.opacity(0.85))
+                            .background(
+                                Capsule()
+                                    .fill(.ultraThinMaterial)
+                                    .environment(\.colorScheme, .dark)
+                            )
+                    )
+                    .clipShape(Capsule())
+                    .padding(.top, errorBannerTopPadding)
+
+                Spacer()
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
     private func generateIfNeeded() {
+        guard store.isConfigured else { return }
         guard viewModel.generatedImage == nil, !viewModel.isGenerating else { return }
         viewModel.generate()
+    }
+
+    private func enforceEntitlementLimits() {
+        if !store.isPro {
+            if Themes.byId(viewModel.selectedThemeId).isPro {
+                viewModel.selectedThemeId = Themes.cyberpunk.id
+            }
+
+            if viewModel.hdrEnabled {
+                viewModel.hdrEnabled = false
+            }
+        }
     }
 
     private func openSettings() {
@@ -135,8 +194,25 @@ struct ContentView: View {
     }
 
     private func zoomIn() {
-        guard viewModel.zoom < 16 else { return }
+        guard viewModel.zoom < maxZoom else { return }
         viewModel.zoom += 1
+    }
+
+    private func showUnlockNudge() {
+        unlockNudgeTask?.cancel()
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            unlockNudgeMessage = "Unlock Pro for street-level zoom"
+        }
+
+        unlockNudgeTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    unlockNudgeMessage = nil
+                }
+            }
+        }
     }
 
     private func queueShareSheet() {
@@ -198,7 +274,12 @@ struct ContentView: View {
             return
         }
 
-        let newZoom = min(max(viewModel.zoom + zoomDelta, 10), 16)
+        if zoomDelta > 0, viewModel.zoom >= maxZoom {
+            currentMagnification = 1
+            return
+        }
+
+        let newZoom = min(max(viewModel.zoom + zoomDelta, 10), maxZoom)
         guard newZoom != viewModel.zoom else {
             currentMagnification = 1
             return
@@ -295,12 +376,12 @@ private struct GeneratorControlsPanel: View {
     let canZoomOut: Bool
     let canZoomIn: Bool
     let canExport: Bool
+    let themeAccent: Color
     let onOpenSettings: () -> Void
     let onZoomOut: () -> Void
     let onZoomIn: () -> Void
     let onGenerate: () -> Void
     let onShare: () -> Void
-    let onSave: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -317,14 +398,6 @@ private struct GeneratorControlsPanel: View {
                         .foregroundStyle(.white.opacity(0.7))
 
                     Spacer()
-
-                    Button(action: onOpenSettings) {
-                        Image(systemName: "gearshape.fill")
-                            .font(.caption.weight(.medium))
-                            .frame(width: 38, height: 38)
-                            .background(Circle().fill(.white.opacity(0.12)))
-                            .foregroundStyle(.white)
-                    }
                 }
 
                 HStack(spacing: 10) {
@@ -340,42 +413,41 @@ private struct GeneratorControlsPanel: View {
                         action: onZoomIn
                     )
 
+                    if isGenerating {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(0.7)
+                            .frame(width: 38, height: 38)
+                            .background(Circle().fill(.white.opacity(0.12)))
+                            .transition(.opacity)
+                    }
+
                     Spacer()
 
-                    Button(action: onGenerate) {
+                    Button(action: onShare) {
                         HStack(spacing: 6) {
-                            if isGenerating {
-                                ProgressView()
-                                    .tint(.white)
-                                    .scaleEffect(0.7)
-                            } else {
-                                Image(systemName: "paintbrush.fill")
-                                    .font(.subheadline)
-                            }
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.subheadline)
 
-                            Text("Generate")
+                            Text("Share")
                                 .font(.subheadline.weight(.semibold))
                         }
-                        .frame(width: 140)
+                        .frame(width: 120)
                         .padding(.vertical, 12)
                         .background(
                             Capsule()
-                                .fill(isGenerating ? .white.opacity(0.1) : .white.opacity(0.2))
+                                .fill(canExport ? themeAccent : themeAccent.opacity(0.3))
                         )
                         .foregroundStyle(.white)
                     }
-                    .disabled(isGenerating)
+                    .disabled(!canExport)
 
-                    if canExport {
-                        CircleIconButton(
-                            systemName: "square.and.arrow.up",
-                            action: onShare
-                        )
-
-                        CircleIconButton(
-                            systemName: "square.and.arrow.down",
-                            action: onSave
-                        )
+                    Button(action: onOpenSettings) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.caption.weight(.medium))
+                            .frame(width: 38, height: 38)
+                            .background(Circle().fill(.white.opacity(0.12)))
+                            .foregroundStyle(.white)
                     }
                 }
             }

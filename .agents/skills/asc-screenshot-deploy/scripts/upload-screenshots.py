@@ -26,6 +26,7 @@ import jwt
 # ── Apple display type mapping ──────────────────────────────────────────────
 
 DISPLAY_TYPES = {
+    "2048x2732": "APP_IPAD_PRO_3GEN_129",
     "1320x2868": "APP_IPHONE_67",
     "1284x2778": "APP_IPHONE_65",
     "1206x2622": "APP_IPHONE_61",

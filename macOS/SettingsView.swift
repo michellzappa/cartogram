@@ -60,6 +60,16 @@ struct SettingsView: View {
             }
 
             Section("Photos") {
+                Picker("Source", selection: $viewModel.photoAlbumId) {
+                    Text("All Photos").tag("")
+                    if !viewModel.availableAlbums.isEmpty {
+                        Divider()
+                        ForEach(viewModel.availableAlbums) { album in
+                            Text(album.title).tag(album.id)
+                        }
+                    }
+                }
+
                 HStack {
                     Text("Geotagged photos")
                     Spacer()
@@ -75,7 +85,10 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 380, height: 420)
+        .frame(width: 380, height: 460)
+        .task {
+            viewModel.loadAlbumsIfNeeded()
+        }
     }
 }
 

@@ -20,12 +20,24 @@ enum LocationMode: String, CaseIterable {
 }
 
 final class GeneratorViewModel: ObservableObject {
+    private static let freeZoomCap = 14
+
     @AppStorage("defaultAddress") var defaultAddress: String = "" { didSet { clearCenter(); regenerateIfNeeded() } }
     @AppStorage("locationMode") var locationModeRaw: String = "auto" { didSet { clearCenter(); regenerateIfNeeded() } }
     @AppStorage("defaultZoom") var zoom: Int = 14 { didSet { regenerateIfNeeded() } }
     @AppStorage("heatmapEnabled") var heatmapEnabled: Bool = true { didSet { regenerateIfNeeded() } }
     @AppStorage("selectedTheme") var selectedThemeId: String = "cyberpunk" { didSet { regenerateIfNeeded() } }
     @AppStorage("hdrEnabled") var hdrEnabled: Bool = true { didSet { regenerateIfNeeded() } }
+    @AppStorage("photoAlbumId") var photoAlbumId: String = "" {
+        didSet {
+            guard oldValue != photoAlbumId else { return }
+            invalidatePhotoCache()
+            cachedResolvedAlbumId = nil
+            cachedResolvedAlbumTitle = nil
+            clearCenter()
+            regenerateIfNeeded()
+        }
+    }
 
     @Published var isGenerating = false
     @Published var progress: String = ""
@@ -61,6 +73,30 @@ final class GeneratorViewModel: ObservableObject {
     private let photoCacheLock = NSLock()
     private var cachedPhotoLocations: [LocationPoint]?
     private var cachedPhotoAuthorizationStatus: PHAuthorizationStatus?
+    private var cachedPhotoAlbumId: String?
+
+    private var cachedResolvedAlbumId: String?
+    private var cachedResolvedAlbumTitle: String?
+
+    var photoAlbumDisplayTitle: String {
+        let id = photoAlbumId
+        guard !id.isEmpty else { return "All Photos" }
+        if let cachedId = cachedResolvedAlbumId, cachedId == id, let title = cachedResolvedAlbumTitle {
+            return title
+        }
+        let title = photoAlbumTitle(forLocalIdentifier: id) ?? "All Photos"
+        cachedResolvedAlbumId = id
+        cachedResolvedAlbumTitle = title
+        return title
+    }
+
+    private func invalidatePhotoCache() {
+        photoCacheLock.lock()
+        cachedPhotoLocations = nil
+        cachedPhotoAuthorizationStatus = nil
+        cachedPhotoAlbumId = nil
+        photoCacheLock.unlock()
+    }
 
     private struct ResolveSnapshot {
         let defaultAddress: String
@@ -97,13 +133,16 @@ final class GeneratorViewModel: ObservableObject {
     }
 
     private func makeRenderSnapshot() -> RenderSnapshot {
-        RenderSnapshot(
+        let isPro = StoreManager.cachedProStatus()
+        let theme = selectedTheme.isPro && !isPro ? Themes.cyberpunk : selectedTheme
+
+        return RenderSnapshot(
             defaultAddress: defaultAddress,
             locationMode: locationMode,
-            zoom: zoom,
+            zoom: isPro ? zoom : min(zoom, Self.freeZoomCap),
             heatmapEnabled: heatmapEnabled,
-            selectedTheme: selectedTheme,
-            hdrEnabled: hdrEnabled,
+            selectedTheme: theme,
+            hdrEnabled: isPro && hdrEnabled,
             rotation: rotation,
             center: centerLat.flatMap { lat in
                 centerLon.map { lon in (lat: lat, lon: lon) }
@@ -231,7 +270,8 @@ final class GeneratorViewModel: ObservableObject {
                 case .auto:
                     guard let loc = getCoreLocation() else {
                         DispatchQueue.main.async {
-                            self.failGeneration("Could not detect location. Grant access in System Settings → Privacy & Security → Location Services.")
+                            self.locationDenied = true
+                            self.isGenerating = false
                         }
                         return
                     }
@@ -323,7 +363,7 @@ final class GeneratorViewModel: ObservableObject {
     }
 
     func saveToPhotos() {
-        if let ciImage = lastCIImage {
+        if StoreManager.cachedProStatus(), hdrEnabled, let ciImage = lastCIImage {
             let tempURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("cartogram_hdr_\(Int(Date().timeIntervalSince1970)).heic")
 
@@ -404,11 +444,13 @@ final class GeneratorViewModel: ObservableObject {
 
     private func photoLocations(forceRefresh: Bool = false) -> [LocationPoint] {
         let currentStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        let albumId = photoAlbumId
 
         photoCacheLock.lock()
         if !forceRefresh,
            let cachedPhotoLocations,
-           cachedPhotoAuthorizationStatus == currentStatus {
+           cachedPhotoAuthorizationStatus == currentStatus,
+           cachedPhotoAlbumId == albumId {
             photoCacheLock.unlock()
             DispatchQueue.main.async {
                 self.photoCount = cachedPhotoLocations.count
@@ -418,12 +460,13 @@ final class GeneratorViewModel: ObservableObject {
         }
         photoCacheLock.unlock()
 
-        let points = fetchPhotoLocations()
+        let points = fetchPhotoLocations(albumLocalIdentifier: albumId.isEmpty ? nil : albumId)
         let resolvedStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
 
         photoCacheLock.lock()
         cachedPhotoLocations = points
         cachedPhotoAuthorizationStatus = resolvedStatus
+        cachedPhotoAlbumId = albumId
         photoCacheLock.unlock()
 
         DispatchQueue.main.async {

@@ -38,17 +38,19 @@ public enum HeatmapBlend {
 public struct MapTheme {
     public let id: String
     public let name: String
+    public let isPro: Bool
     public let mapStyle: MapLayerStyle
     public let bgColor: (r: Double, g: Double, b: Double)
     public let heatmap: HeatmapPalette
     public let blend: HeatmapBlend
 
     public init(id: String, name: String,
+                isPro: Bool = false,
                 mapStyle: MapLayerStyle,
                 bgColor: (r: Double, g: Double, b: Double),
                 heatmap: HeatmapPalette,
                 blend: HeatmapBlend = .screen) {
-        self.id = id; self.name = name
+        self.id = id; self.name = name; self.isPro = isPro
         self.mapStyle = mapStyle
         self.bgColor = bgColor; self.heatmap = heatmap; self.blend = blend
     }
@@ -126,12 +128,12 @@ private func monoStyleLight(
 
 public enum Themes {
 
-    // Deep navy map + magenta/pink heatmap
+    // Deep purple map + magenta/pink heatmap (matches app icon)
     public static let cyberpunk = MapTheme(
         id: "cyberpunk",
         name: "Cyberpunk",
-        mapStyle: monoStyle(r: 0.09, g: 0.09, b: 0.14, base: 0.11),
-        bgColor: (0.06, 0.06, 0.10),
+        mapStyle: monoStyle(r: 0.10, g: 0.06, b: 0.16, base: 0.11),
+        bgColor: (0.07, 0.04, 0.12),
         heatmap: HeatmapPalette(
             dim:    (r: 0.45, g: 0.05, b: 0.40, a: 0.40),
             mid:    (r: 0.90, g: 0.18, b: 0.54, a: 0.65),
@@ -156,6 +158,7 @@ public enum Themes {
     public static let ember = MapTheme(
         id: "ember",
         name: "Ember",
+        isPro: true,
         mapStyle: monoStyle(r: 0.14, g: 0.11, b: 0.09, base: 0.11),
         bgColor: (0.10, 0.08, 0.06),
         heatmap: HeatmapPalette(
@@ -170,6 +173,7 @@ public enum Themes {
     public static let ghost = MapTheme(
         id: "ghost",
         name: "Ghost",
+        isPro: true,
         mapStyle: monoStyleLight(r: 0.91, g: 0.91, b: 0.93, base: 0.92),
         bgColor: (0.91, 0.91, 0.93),
         heatmap: HeatmapPalette(
@@ -184,6 +188,7 @@ public enum Themes {
     public static let moss = MapTheme(
         id: "moss",
         name: "Moss",
+        isPro: true,
         mapStyle: monoStyle(r: 0.10, g: 0.13, b: 0.09, base: 0.11),
         bgColor: (0.07, 0.09, 0.06),
         heatmap: HeatmapPalette(
@@ -194,7 +199,36 @@ public enum Themes {
         blend: .normal
     )
 
-    public static let all: [MapTheme] = [cyberpunk, midnight, ember, ghost, moss]
+    // Dark amber map + golden/sunset heatmap
+    public static let solar = MapTheme(
+        id: "solar",
+        name: "Solar",
+        isPro: true,
+        mapStyle: monoStyle(r: 0.14, g: 0.12, b: 0.07, base: 0.10),
+        bgColor: (0.10, 0.08, 0.04),
+        heatmap: HeatmapPalette(
+            dim:    (r: 0.50, g: 0.30, b: 0.05, a: 0.40),
+            mid:    (r: 1.00, g: 0.72, b: 0.10, a: 0.65),
+            bright: (r: 2.50, g: 2.10, b: 1.00, a: 0.90)
+        ),
+        blend: .normal
+    )
+
+    // Dark rose map + soft cherry blossom pink heatmap
+    public static let sakura = MapTheme(
+        id: "sakura",
+        name: "Sakura",
+        isPro: true,
+        mapStyle: monoStyle(r: 0.13, g: 0.08, b: 0.10, base: 0.10),
+        bgColor: (0.09, 0.05, 0.07),
+        heatmap: HeatmapPalette(
+            dim:    (r: 0.45, g: 0.20, b: 0.30, a: 0.40),
+            mid:    (r: 0.90, g: 0.50, b: 0.62, a: 0.65),
+            bright: (r: 2.20, g: 1.60, b: 1.80, a: 0.90)
+        )
+    )
+
+    public static let all: [MapTheme] = [cyberpunk, midnight, ember, ghost, moss, solar, sakura]
 
     public static func byId(_ id: String) -> MapTheme {
         all.first { $0.id == id } ?? cyberpunk

@@ -10,10 +10,10 @@
           "image-name" : "Image.jpeg",
           "name" : "Image",
           "position" : {
-            "scale" : 1.5,
+            "scale" : 2.5,
             "translation-in-points" : [
-              -48.140625,
-              66.6953125
+              -182.671463400452,
+              178.22407000762087
             ]
           }
         }

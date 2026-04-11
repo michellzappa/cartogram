@@ -1,0 +1,32 @@
+{
+  "identifier" : "3E8CF3B4-4524-4A6D-AB4A-6F2B043573BC",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "3.99",
+      "familyShareable" : false,
+      "internalID" : "5D0D44AE-044A-4BD0-8200-3E71CFD71934",
+      "localizations" : [
+        {
+          "description" : "Unlock all themes, HDR export, and support independent development.",
+          "displayName" : "Cartogram Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.centaur-labs.cartogram.pro",
+      "referenceName" : "Cartogram Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_developerTeamID" : "992N457T8D",
+    "_lastSynchronizedDate" : 765763200,
+    "_locale" : "en_US",
+    "_storefront" : "USA"
+  },
+  "subscriptionGroups" : [],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

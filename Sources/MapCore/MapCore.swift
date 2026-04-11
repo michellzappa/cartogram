@@ -346,12 +346,23 @@ private func debugLog(_ msg: String) {
 
 // MARK: - PhotoKit
 
-public func fetchPhotoLocations() -> [LocationPoint] {
-    let sem = DispatchSemaphore(value: 0)
+public struct PhotoAlbum: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let title: String
+    public let assetCount: Int
 
+    public init(id: String, title: String, assetCount: Int) {
+        self.id = id
+        self.title = title
+        self.assetCount = assetCount
+    }
+}
+
+private func ensurePhotosAuthorization() -> PHAuthorizationStatus {
     let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     debugLog("Photos auth status: \(status.rawValue)")
     if status == .notDetermined {
+        let sem = DispatchSemaphore(value: 0)
         debugLog("Requesting Photos authorization...")
         PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
             debugLog("Authorization callback: \(newStatus.rawValue)")
@@ -359,8 +370,11 @@ public func fetchPhotoLocations() -> [LocationPoint] {
         }
         sem.wait()
     }
+    return PHPhotoLibrary.authorizationStatus(for: .readWrite)
+}
 
-    let authStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+public func fetchPhotoLocations(albumLocalIdentifier: String? = nil) -> [LocationPoint] {
+    let authStatus = ensurePhotosAuthorization()
     debugLog("Final Photos auth status: \(authStatus.rawValue)")
     guard authStatus == .authorized || authStatus == .limited else {
         debugLog("Photos access DENIED")
@@ -373,10 +387,29 @@ public func fetchPhotoLocations() -> [LocationPoint] {
     let opts = PHFetchOptions()
     opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
 
-    let assets = PHAsset.fetchAssets(with: .image, options: opts)
-    var points: [LocationPoint] = []
+    let assets: PHFetchResult<PHAsset>
+    if let albumId = albumLocalIdentifier, !albumId.isEmpty {
+        let collections = PHAssetCollection.fetchAssetCollections(
+            withLocalIdentifiers: [albumId],
+            options: nil
+        )
+        if let collection = collections.firstObject {
+            // Album assets can be mixed-type; filter to images.
+            opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+            assets = PHAsset.fetchAssets(in: collection, options: opts)
+        } else {
+            #if DEBUG
+            print("  Album \(albumId) not found; falling back to full library")
+            #endif
+            assets = PHAsset.fetchAssets(with: .image, options: opts)
+        }
+    } else {
+        assets = PHAsset.fetchAssets(with: .image, options: opts)
+    }
 
+    var points: [LocationPoint] = []
     assets.enumerateObjects { asset, _, _ in
+        guard asset.mediaType == .image else { return }
         guard let loc = asset.location else { return }
         let coord = loc.coordinate
         guard coord.latitude != 0 || coord.longitude != 0 else { return }
@@ -388,6 +421,40 @@ public func fetchPhotoLocations() -> [LocationPoint] {
     print("  Found \(points.count) geotagged photos via PhotoKit")
     #endif
     return points
+}
+
+public func fetchUserPhotoAlbums() -> [PhotoAlbum] {
+    let authStatus = ensurePhotosAuthorization()
+    guard authStatus == .authorized || authStatus == .limited else {
+        return []
+    }
+
+    let collections = PHAssetCollection.fetchAssetCollections(
+        with: .album,
+        subtype: .albumRegular,
+        options: nil
+    )
+
+    var albums: [PhotoAlbum] = []
+    collections.enumerateObjects { collection, _, _ in
+        guard let title = collection.localizedTitle, !title.isEmpty else { return }
+        albums.append(PhotoAlbum(
+            id: collection.localIdentifier,
+            title: title,
+            assetCount: collection.estimatedAssetCount == NSNotFound ? 0 : collection.estimatedAssetCount
+        ))
+    }
+    albums.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    return albums
+}
+
+public func photoAlbumTitle(forLocalIdentifier id: String) -> String? {
+    guard !id.isEmpty else { return nil }
+    let collections = PHAssetCollection.fetchAssetCollections(
+        withLocalIdentifiers: [id],
+        options: nil
+    )
+    return collections.firstObject?.localizedTitle
 }
 
 // MARK: - Heatmap Rendering
