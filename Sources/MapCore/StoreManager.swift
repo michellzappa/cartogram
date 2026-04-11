@@ -12,7 +12,7 @@ public final class StoreManager: ObservableObject {
 
     /// The product ID for the single non-consumable Pro unlock.
     /// Register this in App Store Connect when preparing v1.2.
-    public static let proProductID = "com.centaur-labs.cartogram.pro"
+    public static let proProductID = "cartogram.pro"
 
     /// First version distributed as free. Set this to the build number of v1.2
     /// so AppTransaction can distinguish paid-era users from free-era users.

@@ -13,7 +13,7 @@
           "locale" : "en_US"
         }
       ],
-      "productID" : "com.centaur-labs.cartogram.pro",
+      "productID" : "cartogram.pro",
       "referenceName" : "Cartogram Pro",
       "type" : "NonConsumable"
     }
